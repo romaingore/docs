@@ -1,0 +1,82 @@
+---
+title: "Linux & Shell"
+description: "Commandes essentielles et administration système Linux"
+---
+
+## Commandes de base
+
+### Navigation et fichiers
+
+```bash
+pwd                     # répertoire courant
+ls -la                  # lister les fichiers (détaillé)
+cd /chemin/vers/dossier # changer de répertoire
+mkdir -p dossier/sous   # créer des répertoires (récursif)
+cp -r source/ dest/     # copier (récursif)
+mv ancien nouveau       # déplacer/renommer
+rm -rf dossier/         # supprimer (récursif, forcé)
+```
+
+### Recherche
+
+```bash
+find / -name "*.log"           # chercher des fichiers
+grep -r "pattern" /chemin/     # chercher dans le contenu
+which commande                 # localiser un exécutable
+```
+
+### Gestion des processus
+
+```bash
+ps aux                  # lister les processus
+top / htop              # monitoring en temps réel
+kill -9 PID             # tuer un processus
+systemctl status nginx  # état d'un service
+```
+
+## Permissions
+
+```
+-rwxr-xr-- 1 user group 4096 Jan 1 00:00 fichier
+ │││ │││ │││
+ │││ │││ └── Autres (read)
+ │││ └──── Groupe (read + execute)
+ └────── Propriétaire (read + write + execute)
+```
+
+```bash
+chmod 755 fichier    # rwxr-xr-x
+chmod u+x script.sh  # ajouter exécution pour le propriétaire
+chown user:group fichier  # changer le propriétaire
+```
+
+## Redirections et pipes
+
+```bash
+commande > fichier    # rediriger stdout (écraser)
+commande >> fichier   # rediriger stdout (ajouter)
+commande 2> erreurs   # rediriger stderr
+commande1 | commande2 # pipe : sortie de 1 → entrée de 2
+
+# Exemples
+cat access.log | grep "404" | wc -l    # compter les erreurs 404
+ps aux | grep nginx                     # chercher un processus
+```
+
+## Variables d'environnement
+
+```bash
+export MA_VAR="valeur"   # définir une variable
+echo $MA_VAR             # afficher
+env                      # lister toutes les variables
+source ~/.bashrc         # recharger la config
+```
+
+## SSH
+
+```bash
+ssh user@serveur                   # connexion
+ssh -i ~/.ssh/cle.pem user@host   # avec clé privée
+scp fichier user@host:/chemin/    # copier vers un serveur
+ssh-keygen -t ed25519              # générer une paire de clés
+```

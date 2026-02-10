@@ -1,0 +1,114 @@
+---
+title: "CI/CD"
+description: "Intégration continue et déploiement continu"
+---
+
+## Définitions
+
+| Terme | Signification |
+|---|---|
+| **CI** (Continuous Integration) | Intégrer et tester le code automatiquement à chaque push |
+| **CD** (Continuous Delivery) | Préparer automatiquement le code pour un déploiement |
+| **CD** (Continuous Deployment) | Déployer automatiquement en production |
+
+```
+Push → Build → Test → [Approval] → Deploy
+ CI ─────────────────┘              │
+ CD (Delivery) ─────────────────────┘ (manuel)
+ CD (Deployment) ───────────────────── (automatique)
+```
+
+## GitHub Actions
+
+### Structure
+
+```
+.github/
+  workflows/
+    ci.yml        # pipeline CI
+    deploy.yml    # pipeline de déploiement
+```
+
+### Exemple de pipeline CI
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run build
+```
+
+### Concepts clés
+
+| Concept | Description |
+|---|---|
+| **Workflow** | Pipeline automatisé (fichier YAML) |
+| **Job** | Ensemble d'étapes qui s'exécutent sur un même runner |
+| **Step** | Action individuelle dans un job |
+| **Runner** | Machine qui exécute le job |
+| **Action** | Composant réutilisable (`uses:`) |
+| **Secret** | Variable chiffrée (`${{ secrets.TOKEN }}`) |
+
+## GitLab CI
+
+```yaml
+stages:
+  - test
+  - build
+  - deploy
+
+test:
+  stage: test
+  image: node:20
+  script:
+    - npm ci
+    - npm test
+
+build:
+  stage: build
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+
+deploy:
+  stage: deploy
+  script:
+    - ./deploy.sh
+  only:
+    - main
+```
+
+## Bonnes pratiques
+
+- Lancer les tests sur **chaque push** et **chaque PR**
+- Garder les pipelines **rapides** (cache, parallélisation)
+- Ne jamais stocker de secrets dans le code
+- Utiliser des **environnements** séparés (staging, production)
+- Implémenter des **rollbacks** automatiques

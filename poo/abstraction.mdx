@@ -1,0 +1,67 @@
+---
+title: "Abstraction"
+description: "Masquer la complexité et exposer uniquement l'essentiel"
+---
+
+L'**abstraction** consiste à cacher les détails d'implémentation et à n'exposer que l'interface nécessaire à l'utilisateur.
+
+## Classes abstraites
+
+Une classe abstraite ne peut pas être instanciée directement. Elle sert de contrat pour ses classes enfants.
+
+```python
+from abc import ABC, abstractmethod
+
+class Animal(ABC):
+    def __init__(self, nom):
+        self.nom = nom
+
+    @abstractmethod
+    def parler(self):
+        """Chaque animal doit implémenter cette méthode"""
+        pass
+
+    def se_presenter(self):
+        return f"Je suis {self.nom}"
+
+# animal = Animal("test")  # TypeError: impossible d'instancier
+
+class Chien(Animal):
+    def parler(self):
+        return "Wouf !"
+
+rex = Chien("Rex")
+print(rex.parler())         # Wouf !
+print(rex.se_presenter())   # Je suis Rex
+```
+
+## Interfaces (protocoles en Python)
+
+Python n'a pas d'interfaces au sens Java, mais utilise les **protocoles** (typing) ou les classes abstraites pures.
+
+```python
+from typing import Protocol
+
+class Drawable(Protocol):
+    def draw(self) -> None: ...
+
+class Circle:
+    def draw(self) -> None:
+        print("Drawing circle")
+
+class Square:
+    def draw(self) -> None:
+        print("Drawing square")
+
+def render(shape: Drawable) -> None:
+    shape.draw()  # fonctionne si l'objet a une méthode draw()
+```
+
+## Abstraction vs Encapsulation
+
+| | Abstraction | Encapsulation |
+|---|---|---|
+| **Objectif** | Masquer la complexité | Protéger les données |
+| **Niveau** | Conception (design) | Implémentation |
+| **Moyen** | Classes abstraites, interfaces | Visibilité (public/privé) |
+| **Question** | "Que fait l'objet ?" | "Comment le fait-il ?" |

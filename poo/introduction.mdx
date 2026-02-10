@@ -1,0 +1,46 @@
+---
+title: "Introduction à la POO"
+description: "Les concepts fondamentaux de la Programmation Orientée Objet"
+---
+
+La **Programmation Orientée Objet** (POO) est un paradigme de programmation qui organise le code autour d'**objets** plutôt que de fonctions et de logique procédurale.
+
+## Les 4 piliers de la POO
+
+| Pilier | Description |
+|---|---|
+| **Encapsulation** | Regrouper données et comportements, contrôler l'accès |
+| **Héritage** | Réutiliser et étendre des classes existantes |
+| **Polymorphisme** | Utiliser une même interface pour des types différents |
+| **Abstraction** | Masquer la complexité, exposer l'essentiel |
+
+## Pourquoi la POO ?
+
+- **Modularité** : le code est organisé en unités logiques
+- **Réutilisabilité** : les classes peuvent être réutilisées dans différents contextes
+- **Maintenabilité** : les modifications sont localisées
+- **Modélisation** : représentation naturelle du monde réel
+
+## Paradigme procédural vs objet
+
+```python
+# Procédural
+def calculer_aire(largeur, hauteur):
+    return largeur * hauteur
+
+aire = calculer_aire(5, 3)
+```
+
+```python
+# Orienté Objet
+class Rectangle:
+    def __init__(self, largeur, hauteur):
+        self.largeur = largeur
+        self.hauteur = hauteur
+
+    def aire(self):
+        return self.largeur * self.hauteur
+
+rect = Rectangle(5, 3)
+print(rect.aire())
+```

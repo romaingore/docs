@@ -1,0 +1,64 @@
+---
+title: "Encapsulation"
+description: "Protéger les données internes d'un objet et contrôler leur accès"
+---
+
+L'**encapsulation** consiste à regrouper les données (attributs) et les comportements (méthodes) au sein d'une même unité, tout en contrôlant l'accès depuis l'extérieur.
+
+## Niveaux de visibilité
+
+| Visibilité | Python | Java | Description |
+|---|---|---|---|
+| **Public** | `self.nom` | `public` | Accessible partout |
+| **Protégé** | `self._nom` | `protected` | Accessible dans la classe et ses enfants |
+| **Privé** | `self.__nom` | `private` | Accessible uniquement dans la classe |
+
+<Warning>
+  En Python, la visibilité est une **convention**, pas une restriction stricte. Le double underscore `__` déclenche le *name mangling* mais n'empêche pas réellement l'accès.
+</Warning>
+
+## Getters et Setters
+
+### Approche classique (Java-style)
+
+```python
+class CompteBancaire:
+    def __init__(self, solde):
+        self.__solde = solde
+
+    def get_solde(self):
+        return self.__solde
+
+    def set_solde(self, montant):
+        if montant < 0:
+            raise ValueError("Le solde ne peut pas être négatif")
+        self.__solde = montant
+```
+
+### Approche Pythonique avec `@property`
+
+```python
+class CompteBancaire:
+    def __init__(self, solde):
+        self._solde = solde
+
+    @property
+    def solde(self):
+        return self._solde
+
+    @solde.setter
+    def solde(self, montant):
+        if montant < 0:
+            raise ValueError("Le solde ne peut pas être négatif")
+        self._solde = montant
+
+compte = CompteBancaire(1000)
+print(compte.solde)   # 1000 (appelle le getter)
+compte.solde = 500    # appelle le setter
+```
+
+## Pourquoi encapsuler ?
+
+- **Validation** : vérifier les données avant modification
+- **Flexibilité** : changer l'implémentation interne sans casser le code client
+- **Sécurité** : empêcher les états incohérents

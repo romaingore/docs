@@ -1,0 +1,65 @@
+---
+title: "Classes et Objets"
+description: "Comprendre les classes, les objets, les attributs et les méthodes"
+---
+
+## Classe
+
+Une **classe** est un modèle (blueprint) qui définit la structure et le comportement d'un type d'objet.
+
+```python
+class Voiture:
+    # Attribut de classe (partagé entre toutes les instances)
+    nb_roues = 4
+
+    # Constructeur
+    def __init__(self, marque, couleur):
+        # Attributs d'instance
+        self.marque = marque
+        self.couleur = couleur
+        self.vitesse = 0
+
+    # Méthode d'instance
+    def accelerer(self, increment):
+        self.vitesse += increment
+```
+
+## Objet (Instance)
+
+Un **objet** est une instance concrète d'une classe.
+
+```python
+ma_voiture = Voiture("Toyota", "rouge")
+ma_voiture.accelerer(50)
+print(ma_voiture.vitesse)  # 50
+```
+
+## Attributs vs Méthodes
+
+| | Attribut | Méthode |
+|---|---|---|
+| **Nature** | Variable liée à l'objet | Fonction liée à l'objet |
+| **Accès** | `objet.attribut` | `objet.methode()` |
+| **Rôle** | Stocker l'état | Définir le comportement |
+
+## Méthodes spéciales
+
+```python
+class Produit:
+    def __init__(self, nom, prix):
+        self.nom = nom
+        self.prix = prix
+
+    def __str__(self):
+        return f"{self.nom} - {self.prix}€"
+
+    def __repr__(self):
+        return f"Produit('{self.nom}', {self.prix})"
+
+    def __eq__(self, other):
+        return self.nom == other.nom and self.prix == other.prix
+```
+
+<Note>
+  `__init__` n'est pas le constructeur a proprement parler, c'est l'**initialiseur**. Le vrai constructeur en Python est `__new__`.
+</Note>

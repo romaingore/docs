@@ -1,0 +1,91 @@
+---
+title: "Héritage"
+description: "Créer de nouvelles classes à partir de classes existantes"
+---
+
+L'**héritage** permet à une classe (enfant) de reprendre les attributs et méthodes d'une autre classe (parent) tout en pouvant les étendre ou les modifier.
+
+## Syntaxe de base
+
+```python
+class Animal:
+    def __init__(self, nom):
+        self.nom = nom
+
+    def parler(self):
+        raise NotImplementedError
+
+class Chien(Animal):
+    def parler(self):
+        return f"{self.nom} dit : Wouf !"
+
+class Chat(Animal):
+    def parler(self):
+        return f"{self.nom} dit : Miaou !"
+```
+
+## `super()` : appeler le parent
+
+```python
+class Employe:
+    def __init__(self, nom, salaire):
+        self.nom = nom
+        self.salaire = salaire
+
+class Manager(Employe):
+    def __init__(self, nom, salaire, equipe):
+        super().__init__(nom, salaire)  # appelle le constructeur parent
+        self.equipe = equipe
+```
+
+## Héritage multiple
+
+Python supporte l'héritage multiple. L'ordre de résolution des méthodes suit le **MRO** (Method Resolution Order) avec l'algorithme C3.
+
+```python
+class A:
+    def hello(self):
+        return "A"
+
+class B(A):
+    def hello(self):
+        return "B"
+
+class C(A):
+    def hello(self):
+        return "C"
+
+class D(B, C):
+    pass
+
+d = D()
+print(d.hello())  # "B" (B est avant C dans le MRO)
+print(D.__mro__)  # (D, B, C, A, object)
+```
+
+<Warning>
+  L'héritage multiple peut créer le **problème du diamant**. Utilisez-le avec précaution et préférez la **composition** quand c'est possible.
+</Warning>
+
+## Héritage vs Composition
+
+| | Héritage | Composition |
+|---|---|---|
+| **Relation** | "est un" (is-a) | "a un" (has-a) |
+| **Couplage** | Fort | Faible |
+| **Flexibilité** | Moins flexible | Plus flexible |
+| **Exemple** | `Manager` est un `Employe` | `Voiture` a un `Moteur` |
+
+```python
+# Composition : plus flexible
+class Moteur:
+    def demarrer(self):
+        return "Vroom !"
+
+class Voiture:
+    def __init__(self):
+        self.moteur = Moteur()  # composition
+
+    def demarrer(self):
+        return self.moteur.demarrer()
+```

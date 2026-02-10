@@ -1,0 +1,100 @@
+---
+title: "Monitoring"
+description: "Surveiller et observer les applications et l'infrastructure"
+---
+
+## Les 3 piliers de l'observabilité
+
+| Pilier | Description | Outils |
+|---|---|---|
+| **Logs** | Événements textuels horodatés | ELK, Loki, CloudWatch |
+| **Métriques** | Mesures numériques dans le temps | Prometheus, Grafana, Datadog |
+| **Traces** | Suivi des requêtes à travers les services | Jaeger, Zipkin |
+
+## Métriques clés
+
+### Les 4 Golden Signals (Google SRE)
+
+| Signal | Description | Exemple |
+|---|---|---|
+| **Latence** | Temps de réponse | p50, p95, p99 |
+| **Trafic** | Volume de requêtes | req/s |
+| **Erreurs** | Taux d'échec | % de 5xx |
+| **Saturation** | Utilisation des ressources | CPU, RAM, disk |
+
+### Métriques système
+
+```bash
+# CPU
+top / htop
+mpstat
+
+# Mémoire
+free -h
+vmstat
+
+# Disque
+df -h
+iostat
+
+# Réseau
+iftop
+nethogs
+```
+
+## Stack de monitoring
+
+### Prometheus + Grafana
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "mon-app"
+    static_configs:
+      - targets: ["app:3000"]
+```
+
+- **Prometheus** : collecte et stocke les métriques (pull-based)
+- **Grafana** : visualisation et dashboards
+- **Alertmanager** : gestion des alertes
+
+## Logging
+
+### Niveaux de log
+
+| Niveau | Usage |
+|---|---|
+| `DEBUG` | Développement, détails fins |
+| `INFO` | Événements normaux |
+| `WARN` | Situation anormale mais gérée |
+| `ERROR` | Erreur nécessitant une action |
+| `FATAL` | Erreur critique, arrêt du service |
+
+### Logs structurés
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:00Z",
+  "level": "ERROR",
+  "service": "api",
+  "message": "Database connection failed",
+  "error": "connection refused",
+  "duration_ms": 5000
+}
+```
+
+<Tip>
+  Préférer les logs **structurés** (JSON) aux logs texte brut pour faciliter le parsing et l'analyse.
+</Tip>
+
+## Alerting
+
+### Bonnes pratiques
+
+- Alerter sur les **symptômes** (latence haute), pas les causes (CPU élevé)
+- Chaque alerte doit être **actionnable**
+- Éviter l'**alert fatigue** : trop d'alertes = alertes ignorées
+- Définir des **SLO** (Service Level Objectives) et alerter quand le budget d'erreur est consommé

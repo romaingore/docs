@@ -1,0 +1,82 @@
+---
+title: "Polymorphisme"
+description: "Utiliser une même interface pour des comportements différents"
+---
+
+Le **polymorphisme** permet d'utiliser une même interface (méthode, fonction) pour des types différents. Chaque type implémente son propre comportement.
+
+## Polymorphisme par héritage (surcharge de méthode)
+
+```python
+class Forme:
+    def aire(self):
+        raise NotImplementedError
+
+class Cercle(Forme):
+    def __init__(self, rayon):
+        self.rayon = rayon
+
+    def aire(self):
+        return 3.14159 * self.rayon ** 2
+
+class Rectangle(Forme):
+    def __init__(self, largeur, hauteur):
+        self.largeur = largeur
+        self.hauteur = hauteur
+
+    def aire(self):
+        return self.largeur * self.hauteur
+
+# Même interface, comportements différents
+formes = [Cercle(5), Rectangle(4, 6)]
+for forme in formes:
+    print(forme.aire())
+```
+
+## Duck Typing
+
+En Python, le polymorphisme ne nécessite pas d'héritage commun. Si un objet "marche comme un canard et fait coin-coin", c'est un canard.
+
+```python
+class Fichier:
+    def lire(self):
+        return "Contenu du fichier"
+
+class RequeteHTTP:
+    def lire(self):
+        return "Réponse HTTP"
+
+def afficher_contenu(source):
+    # Fonctionne avec tout objet ayant une méthode lire()
+    print(source.lire())
+
+afficher_contenu(Fichier())
+afficher_contenu(RequeteHTTP())
+```
+
+## Surcharge d'opérateurs
+
+```python
+class Vecteur:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __add__(self, other):
+        return Vecteur(self.x + other.x, self.y + other.y)
+
+    def __str__(self):
+        return f"({self.x}, {self.y})"
+
+v1 = Vecteur(1, 2)
+v2 = Vecteur(3, 4)
+print(v1 + v2)  # (4, 6)
+```
+
+## Types de polymorphisme
+
+| Type | Description | Exemple |
+|---|---|---|
+| **Ad hoc** | Surcharge de fonctions/opérateurs | `__add__`, `__str__` |
+| **Paramétrique** | Génériques (types paramétrés) | `list[int]`, `dict[str, Any]` |
+| **Sous-typage** | Via l'héritage | `Cercle` utilisé comme `Forme` |

@@ -1,0 +1,70 @@
+---
+title: "Cloud"
+description: "Les fondamentaux du Cloud Computing"
+---
+
+## Modèles de service
+
+```
+┌─────────────────────────────────────────┐
+│  SaaS  │  Gmail, Slack, Notion          │ ← Tout géré
+├────────┤                                │
+│  PaaS  │  Heroku, Vercel, Railway       │ ← App + Data
+├────────┤                                │
+│  IaaS  │  AWS EC2, GCP Compute, Azure VM│ ← Infra brute
+└─────────────────────────────────────────┘
+```
+
+| Modèle | Tu gères | Le provider gère |
+|---|---|---|
+| **IaaS** | OS, runtime, app, data | Serveurs, réseau, stockage |
+| **PaaS** | App, data | OS, runtime, serveurs |
+| **SaaS** | Rien | Tout |
+
+## Principaux providers
+
+| Service | AWS | GCP | Azure |
+|---|---|---|---|
+| Compute | EC2 | Compute Engine | Virtual Machines |
+| Serverless | Lambda | Cloud Functions | Azure Functions |
+| Stockage | S3 | Cloud Storage | Blob Storage |
+| Base de données | RDS | Cloud SQL | Azure SQL |
+| Conteneurs | ECS/EKS | GKE | AKS |
+| DNS | Route 53 | Cloud DNS | Azure DNS |
+
+## Concepts fondamentaux
+
+### Régions et zones
+
+- **Région** : emplacement géographique (ex: `eu-west-1` = Irlande)
+- **Zone de disponibilité** (AZ) : datacenter isolé dans une région
+- Déployer sur **plusieurs AZ** pour la haute disponibilité
+
+### Scalabilité
+
+| Type | Description |
+|---|---|
+| **Scaling vertical** | Plus de ressources (CPU, RAM) sur une machine |
+| **Scaling horizontal** | Plus de machines |
+| **Auto-scaling** | Ajustement automatique selon la charge |
+
+### Infrastructure as Code (IaC)
+
+Gérer l'infrastructure via du code versionné plutôt que manuellement.
+
+```hcl
+# Terraform - exemple
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "web-server"
+  }
+}
+```
+
+Outils principaux :
+- **Terraform** : IaC multi-cloud (déclaratif)
+- **Ansible** : Configuration management (procédural)
+- **Pulumi** : IaC en langages de programmation

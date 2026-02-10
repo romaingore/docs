@@ -1,0 +1,109 @@
+---
+title: "Docker"
+description: "Conteneurisation d'applications avec Docker"
+---
+
+**Docker** permet d'empaqueter une application et ses dépendances dans un **conteneur** isolé et portable.
+
+## Concepts clés
+
+| Concept | Description |
+|---|---|
+| **Image** | Modèle en lecture seule (blueprint du conteneur) |
+| **Conteneur** | Instance en cours d'exécution d'une image |
+| **Dockerfile** | Fichier décrivant comment construire une image |
+| **Volume** | Stockage persistant |
+| **Network** | Réseau virtuel entre conteneurs |
+| **Registry** | Dépôt d'images (Docker Hub) |
+
+## Commandes essentielles
+
+```bash
+# Images
+docker build -t mon-app .        # construire une image
+docker images                     # lister les images
+docker pull nginx:latest          # télécharger une image
+
+# Conteneurs
+docker run -d -p 8080:80 nginx   # lancer en arrière-plan
+docker ps                         # conteneurs actifs
+docker ps -a                      # tous les conteneurs
+docker logs <id>                  # voir les logs
+docker exec -it <id> bash        # entrer dans un conteneur
+docker stop <id>                  # arrêter
+docker rm <id>                    # supprimer
+
+# Nettoyage
+docker system prune -a            # tout nettoyer
+```
+
+## Dockerfile
+
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --production
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
+```
+
+### Bonnes pratiques
+
+- Utiliser des images **Alpine** (légères)
+- **Multi-stage builds** pour réduire la taille
+- Copier `package.json` avant le code source (cache des layers)
+- Un processus par conteneur
+- Ne pas lancer en `root`
+
+## Docker Compose
+
+Orchestrer **plusieurs conteneurs** avec un seul fichier.
+
+```yaml
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://user:pass@db:5432/mydb
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=mydb
+
+volumes:
+  pg_data:
+```
+
+```bash
+docker compose up -d      # démarrer
+docker compose down        # arrêter
+docker compose logs -f     # suivre les logs
+docker compose ps          # état des services
+```
+
+## Volumes
+
+```bash
+# Volume nommé (géré par Docker)
+docker volume create mes_donnees
+docker run -v mes_donnees:/data nginx
+
+# Bind mount (lié au système hôte)
+docker run -v $(pwd)/src:/app/src nginx
+```

@@ -1,0 +1,159 @@
+---
+title: "Design Patterns"
+description: "Les patrons de conception les plus courants"
+---
+
+Les **design patterns** sont des solutions éprouvées à des problèmes récurrents de conception logicielle.
+
+## Patterns créationnels
+
+### Singleton
+
+Garantir qu'une classe n'a qu'**une seule instance**.
+
+```python
+class Database:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+db1 = Database()
+db2 = Database()
+print(db1 is db2)  # True
+```
+
+### Factory
+
+Déléguer la création d'objets à une méthode.
+
+```python
+class Animal(ABC):
+    @abstractmethod
+    def parler(self): ...
+
+class Chien(Animal):
+    def parler(self): return "Wouf"
+
+class Chat(Animal):
+    def parler(self): return "Miaou"
+
+class AnimalFactory:
+    @staticmethod
+    def creer(type_animal: str) -> Animal:
+        match type_animal:
+            case "chien": return Chien()
+            case "chat": return Chat()
+            case _: raise ValueError(f"Type inconnu: {type_animal}")
+```
+
+## Patterns structurels
+
+### Decorator
+
+Ajouter des responsabilités à un objet **dynamiquement**.
+
+```python
+class Cafe:
+    def cout(self):
+        return 2.0
+
+    def description(self):
+        return "Café simple"
+
+class AvecLait:
+    def __init__(self, cafe):
+        self._cafe = cafe
+
+    def cout(self):
+        return self._cafe.cout() + 0.5
+
+    def description(self):
+        return self._cafe.description() + " + lait"
+
+cafe = AvecLait(Cafe())
+print(cafe.description())  # Café simple + lait
+print(cafe.cout())          # 2.5
+```
+
+### Adapter
+
+Rendre compatibles deux interfaces incompatibles.
+
+```python
+class AncienneAPI:
+    def get_donnees_xml(self):
+        return "<data>valeur</data>"
+
+class AdaptateurJSON:
+    def __init__(self, ancienne_api):
+        self._api = ancienne_api
+
+    def get_donnees_json(self):
+        xml = self._api.get_donnees_xml()
+        # conversion XML -> JSON
+        return {"data": "valeur"}
+```
+
+## Patterns comportementaux
+
+### Observer
+
+Notifier automatiquement des objets quand un état change.
+
+```python
+class EventManager:
+    def __init__(self):
+        self._listeners = {}
+
+    def subscribe(self, event, listener):
+        self._listeners.setdefault(event, []).append(listener)
+
+    def notify(self, event, data):
+        for listener in self._listeners.get(event, []):
+            listener(data)
+
+events = EventManager()
+events.subscribe("commande", lambda d: print(f"Email envoyé: {d}"))
+events.subscribe("commande", lambda d: print(f"Stock mis à jour: {d}"))
+events.notify("commande", "Commande #123")
+```
+
+### Strategy
+
+Définir une famille d'algorithmes interchangeables.
+
+```python
+class TriStrategy(ABC):
+    @abstractmethod
+    def trier(self, data): ...
+
+class TriRapide(TriStrategy):
+    def trier(self, data):
+        return sorted(data)  # quicksort
+
+class TriBulle(TriStrategy):
+    def trier(self, data):
+        # bubble sort...
+        return data
+
+class Trieur:
+    def __init__(self, strategy: TriStrategy):
+        self._strategy = strategy
+
+    def trier(self, data):
+        return self._strategy.trier(data)
+```
+
+## Résumé
+
+| Catégorie | Pattern | Objectif |
+|---|---|---|
+| **Créationnel** | Singleton | Une seule instance |
+| **Créationnel** | Factory | Déléguer la création |
+| **Structurel** | Decorator | Ajouter des responsabilités |
+| **Structurel** | Adapter | Rendre compatible |
+| **Comportemental** | Observer | Notifier les changements |
+| **Comportemental** | Strategy | Algorithmes interchangeables |

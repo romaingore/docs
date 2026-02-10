@@ -1,0 +1,130 @@
+---
+title: "Principes SOLID"
+description: "Les 5 principes de conception orientée objet"
+---
+
+**SOLID** est un acronyme pour 5 principes de conception qui rendent le code plus maintenable, flexible et compréhensible.
+
+## S - Single Responsibility Principle (SRP)
+
+Une classe ne doit avoir qu'**une seule raison de changer**.
+
+```python
+# Mauvais : la classe fait trop de choses
+class Employe:
+    def calculer_salaire(self): ...
+    def sauvegarder_en_bdd(self): ...
+    def generer_rapport(self): ...
+
+# Bon : chaque classe a une responsabilité
+class Employe:
+    def calculer_salaire(self): ...
+
+class EmployeRepository:
+    def sauvegarder(self, employe): ...
+
+class RapportService:
+    def generer(self, employe): ...
+```
+
+## O - Open/Closed Principle (OCP)
+
+Ouvert à l'**extension**, fermé à la **modification**.
+
+```python
+# Bon : on ajoute des comportements sans modifier le code existant
+class Notification(ABC):
+    @abstractmethod
+    def envoyer(self, message): ...
+
+class EmailNotification(Notification):
+    def envoyer(self, message):
+        print(f"Email: {message}")
+
+class SMSNotification(Notification):
+    def envoyer(self, message):
+        print(f"SMS: {message}")
+
+# Pour ajouter Slack, on crée une nouvelle classe, pas de modification
+class SlackNotification(Notification):
+    def envoyer(self, message):
+        print(f"Slack: {message}")
+```
+
+## L - Liskov Substitution Principle (LSP)
+
+Un objet enfant doit pouvoir **remplacer** son parent sans casser le programme.
+
+```python
+# Mauvais : Carre casse le contrat de Rectangle
+class Rectangle:
+    def __init__(self, largeur, hauteur):
+        self.largeur = largeur
+        self.hauteur = hauteur
+
+    def aire(self):
+        return self.largeur * self.hauteur
+
+class Carre(Rectangle):
+    def __init__(self, cote):
+        super().__init__(cote, cote)
+    # Problème : modifier largeur ou hauteur indépendamment n'a pas de sens
+```
+
+## I - Interface Segregation Principle (ISP)
+
+Mieux vaut **plusieurs petites interfaces** qu'une seule grosse.
+
+```python
+# Mauvais : interface trop large
+class Worker(ABC):
+    @abstractmethod
+    def travailler(self): ...
+    @abstractmethod
+    def manger(self): ...  # un robot ne mange pas
+
+# Bon : interfaces séparées
+class Workable(ABC):
+    @abstractmethod
+    def travailler(self): ...
+
+class Feedable(ABC):
+    @abstractmethod
+    def manger(self): ...
+
+class Humain(Workable, Feedable):
+    def travailler(self): ...
+    def manger(self): ...
+
+class Robot(Workable):
+    def travailler(self): ...
+```
+
+## D - Dependency Inversion Principle (DIP)
+
+Dépendre des **abstractions**, pas des implémentations concrètes.
+
+```python
+# Mauvais : dépendance directe
+class UserService:
+    def __init__(self):
+        self.db = MySQLDatabase()  # couplage fort
+
+# Bon : injection de dépendance
+class UserService:
+    def __init__(self, db: Database):  # dépend de l'abstraction
+        self.db = db
+
+service = UserService(MySQLDatabase())
+service = UserService(PostgreSQLDatabase())  # facile à changer
+```
+
+## Résumé
+
+| Principe | Mot-clé | Règle |
+|---|---|---|
+| **S**RP | Responsabilité | Une classe = une raison de changer |
+| **O**CP | Extension | Étendre sans modifier |
+| **L**SP | Substitution | L'enfant remplace le parent |
+| **I**SP | Ségrégation | Petites interfaces spécialisées |
+| **D**IP | Inversion | Dépendre des abstractions |
