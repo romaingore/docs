@@ -60,10 +60,19 @@
             ]
           },
           {
-            "group": "Conteneurisation & CI/CD",
+            "group": "Docker",
             "pages": [
-              "ops/docker",
-              "ops/ci-cd"
+              "ops/docker-fondamentaux",
+              "ops/docker-volumes-reseaux",
+              "ops/docker-compose",
+              "ops/docker-multistage"
+            ]
+          },
+          {
+            "group": "CI/CD & Déploiement",
+            "pages": [
+              "ops/ci-cd",
+              "ops/deploiement-production"
             ]
           },
           {
@@ -71,6 +80,12 @@
             "pages": [
               "ops/cloud",
               "ops/monitoring"
+            ]
+          },
+          {
+            "group": "Orchestration",
+            "pages": [
+              "ops/kubernetes"
             ]
           }
         ]

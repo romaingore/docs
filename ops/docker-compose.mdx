@@ -1,0 +1,1044 @@
+---
+title: "Docker Compose"
+description: "Orchestration locale de services avec Docker Compose"
+---
+
+**Docker Compose** permet de definir et lancer des applications multi-conteneurs a partir d'un seul fichier YAML declaratif.
+
+## Pourquoi Docker Compose ?
+
+### Le probleme
+
+Sans Compose, lancer une stack de plusieurs services necessite de memoriser et executer manuellement de nombreuses commandes :
+
+```bash
+# Creer un reseau
+docker network create mon-reseau
+
+# Lancer la base de donnees
+docker run -d \
+  --name postgres \
+  --network mon-reseau \
+  -e POSTGRES_USER=user \
+  -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DB=mydb \
+  -v pg_data:/var/lib/postgresql/data \
+  postgres:16-alpine
+
+# Lancer le cache Redis
+docker run -d \
+  --name redis \
+  --network mon-reseau \
+  redis:7-alpine
+
+# Lancer l'application
+docker run -d \
+  --name app \
+  --network mon-reseau \
+  -p 3000:3000 \
+  -e DATABASE_URL=postgres://user:secret@postgres:5432/mydb \
+  -e REDIS_URL=redis://redis:6379 \
+  mon-app:latest
+
+# Lancer Adminer
+docker run -d \
+  --name adminer \
+  --network mon-reseau \
+  -p 8080:8080 \
+  adminer
+```
+
+<Warning>
+  Cette approche pose plusieurs problemes :
+  - **4+ commandes** a memoriser et executer dans le bon ordre
+  - **Pas reproductible** : chaque developpeur doit les retaper
+  - **Gestion manuelle** des dependances entre services
+  - **Aucun versionnement** de l'infrastructure
+</Warning>
+
+### La solution
+
+Un seul fichier `docker-compose.yml` declaratif, une seule commande :
+
+```bash
+docker compose up -d
+```
+
+<CardGroup cols={3}>
+  <Card title="Declaratif" icon="file-code">
+    Un fichier YAML decrit toute l'infrastructure
+  </Card>
+  <Card title="Reproductible" icon="arrows-rotate">
+    Chaque developpeur obtient le meme environnement
+  </Card>
+  <Card title="Versionne" icon="code-branch">
+    Infrastructure as Code, commite dans Git
+  </Card>
+</CardGroup>
+
+## Docker CLI vs Docker Compose
+
+<Tabs>
+  <Tab title="Avant (CLI)">
+    ```bash
+    # 1. Creer le reseau
+    docker network create app-network
+
+    # 2. Creer le volume
+    docker volume create pg_data
+
+    # 3. Lancer PostgreSQL
+    docker run -d --name db \
+      --network app-network \
+      -e POSTGRES_USER=user \
+      -e POSTGRES_PASSWORD=secret \
+      -e POSTGRES_DB=mydb \
+      -v pg_data:/var/lib/postgresql/data \
+      postgres:16-alpine
+
+    # 4. Lancer Redis
+    docker run -d --name redis \
+      --network app-network \
+      redis:7-alpine
+
+    # 5. Lancer l'application
+    docker run -d --name app \
+      --network app-network \
+      -p 3000:3000 \
+      -e DATABASE_URL=postgres://user:secret@db:5432/mydb \
+      mon-app:latest
+
+    # 6. Lancer Adminer
+    docker run -d --name adminer \
+      --network app-network \
+      -p 8080:8080 \
+      adminer
+    ```
+
+    **6 commandes**, des dizaines de flags a retenir.
+  </Tab>
+  <Tab title="Apres (Compose)">
+    ```yaml
+    services:
+      app:
+        build: .
+        ports:
+          - "3000:3000"
+        environment:
+          - DATABASE_URL=postgres://user:secret@db:5432/mydb
+        depends_on:
+          - db
+          - redis
+
+      db:
+        image: postgres:16-alpine
+        environment:
+          - POSTGRES_USER=user
+          - POSTGRES_PASSWORD=secret
+          - POSTGRES_DB=mydb
+        volumes:
+          - pg_data:/var/lib/postgresql/data
+
+      redis:
+        image: redis:7-alpine
+
+      adminer:
+        image: adminer
+        ports:
+          - "8080:8080"
+
+    volumes:
+      pg_data:
+    ```
+
+    ```bash
+    docker compose up -d
+    ```
+
+    **1 fichier**, **1 commande**. Le reseau est cree automatiquement.
+  </Tab>
+</Tabs>
+
+## Structure d'un docker-compose.yml
+
+Un fichier Compose se compose de plusieurs sections de premier niveau :
+
+```yaml
+services:       # Les conteneurs a lancer (obligatoire)
+  app:
+    image: node:20-alpine
+    # ...
+
+  db:
+    image: postgres:16-alpine
+    # ...
+
+volumes:        # Les volumes nommes (optionnel)
+  pg_data:
+
+networks:       # Les reseaux personnalises (optionnel)
+  frontend:
+  backend:
+```
+
+| Section | Role | Obligatoire |
+|---|---|---|
+| `services` | Definition des conteneurs | Oui |
+| `volumes` | Declaration des volumes nommes | Non |
+| `networks` | Declaration des reseaux personnalises | Non |
+
+<Note>
+  La cle `version` (ex: `version: "3.8"`) est **obsolete** depuis Docker Compose V2. Elle est ignoree et peut etre omise.
+</Note>
+
+<Warning>
+  **Indentation YAML** : toujours utiliser **2 espaces**. Les tabulations ne sont pas autorisees en YAML et provoqueront une erreur.
+</Warning>
+
+## Configuration des services
+
+### Utiliser une image existante
+
+La facon la plus simple de definir un service est d'utiliser une image depuis un registry (Docker Hub par defaut) :
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine       # image depuis Docker Hub
+    container_name: my-postgres      # nom du conteneur (optionnel)
+    ports:
+      - "5432:5432"                  # mapping de port HOST:CONTAINER
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=mydb
+    restart: unless-stopped          # politique de redemarrage
+```
+
+### Construire une image (build)
+
+Pour construire une image a partir d'un `Dockerfile` :
+
+<Tabs>
+  <Tab title="Syntaxe simple">
+    ```yaml
+    services:
+      app:
+        build: .                     # Dockerfile dans le repertoire courant
+        ports:
+          - "3000:3000"
+    ```
+  </Tab>
+  <Tab title="Syntaxe detaillee">
+    ```yaml
+    services:
+      app:
+        build:
+          context: .                 # repertoire de contexte
+          dockerfile: Dockerfile.dev # Dockerfile specifique
+          args:                      # arguments de build (ARG)
+            NODE_ENV: development
+            APP_VERSION: "1.0.0"
+          target: development        # stage cible (multi-stage build)
+        ports:
+          - "3000:3000"
+    ```
+  </Tab>
+</Tabs>
+
+```bash
+# Construire les images sans lancer les conteneurs
+docker compose build
+
+# Reconstruire et lancer
+docker compose up --build -d
+```
+
+<Tip>
+  Utilisez `target` pour choisir un stage specifique dans un multi-stage build. Cela permet d'avoir un seul Dockerfile avec un stage `development` (avec hot-reload) et un stage `production` (optimise).
+</Tip>
+
+### Port mapping
+
+Le format est toujours `"HOST:CONTAINER"` :
+
+```yaml
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "8080:80"              # accessible sur localhost:8080
+      - "443:443"              # HTTPS
+      - "127.0.0.1:9090:80"   # bind localhost uniquement
+```
+
+<Warning>
+  Par defaut, un port mappe est accessible depuis **toutes les interfaces reseau** de la machine hote (y compris depuis l'exterieur). Pour restreindre l'acces a la machine locale uniquement, prefixez avec `127.0.0.1:` :
+
+  ```yaml
+  ports:
+    - "127.0.0.1:8080:80"   # accessible uniquement depuis localhost
+  ```
+</Warning>
+
+### Restart policies
+
+| Politique | Comportement |
+|---|---|
+| `no` | Ne redemarrer jamais (defaut) |
+| `always` | Toujours redemarre, y compris au boot de Docker |
+| `on-failure` | Redemarre uniquement si le conteneur quitte avec un code d'erreur |
+| `unless-stopped` | Comme `always`, sauf si arrete manuellement |
+
+```yaml
+services:
+  app:
+    image: mon-app:latest
+    restart: unless-stopped    # recommande pour la production
+```
+
+<Tip>
+  `unless-stopped` est generalement le meilleur choix : le service redemarre automatiquement en cas de crash ou de reboot, mais reste arrete si vous l'avez stoppe volontairement.
+</Tip>
+
+### Variables d'environnement
+
+Il existe plusieurs manieres de definir des variables d'environnement dans Compose :
+
+<Tabs>
+  <Tab title="Methode 1 : Liste">
+    ```yaml
+    services:
+      app:
+        image: mon-app:latest
+        environment:
+          - NODE_ENV=production
+          - DATABASE_URL=postgres://user:pass@db:5432/mydb
+          - REDIS_URL=redis://redis:6379
+    ```
+  </Tab>
+  <Tab title="Methode 2 : Map">
+    ```yaml
+    services:
+      app:
+        image: mon-app:latest
+        environment:
+          NODE_ENV: production
+          DATABASE_URL: postgres://user:pass@db:5432/mydb
+          REDIS_URL: redis://redis:6379
+    ```
+  </Tab>
+  <Tab title="Methode 3 : env_file">
+    ```yaml
+    services:
+      app:
+        image: mon-app:latest
+        env_file:
+          - .env
+    ```
+
+    Contenu du fichier `.env` :
+
+    ```bash
+    NODE_ENV=production
+    DATABASE_URL=postgres://user:pass@db:5432/mydb
+    REDIS_URL=redis://redis:6379
+    ```
+  </Tab>
+</Tabs>
+
+#### Substitution de variables
+
+Compose supporte la substitution de variables definies dans le fichier `.env` a la racine du projet ou dans l'environnement shell :
+
+```yaml
+services:
+  db:
+    image: postgres:${PG_VERSION:-16}-alpine    # defaut: 16
+    environment:
+      - POSTGRES_USER=${DB_USER}                # obligatoire
+      - POSTGRES_PASSWORD=${DB_PASSWORD}        # obligatoire
+      - POSTGRES_DB=${DB_NAME:-mydb}            # defaut: mydb
+```
+
+| Syntaxe | Comportement |
+|---|---|
+| `${VAR}` | Valeur de la variable (erreur si non definie) |
+| `${VAR:-default}` | Valeur de la variable, ou `default` si non definie |
+| `${VAR:?erreur}` | Valeur de la variable, ou affiche l'erreur et stoppe |
+
+<Warning>
+  **Bonnes pratiques pour le fichier `.env`** :
+  - **Ne jamais commit** le fichier `.env` (contient des secrets)
+  - **Toujours commit** un fichier `.env.example` avec des valeurs fictives
+  - **Ajouter `.env`** dans le `.gitignore`
+
+  ```bash
+  # .gitignore
+  .env
+  .env.local
+  .env.*.local
+  ```
+
+  ```bash
+  # .env.example (a commit)
+  DB_USER=your_user
+  DB_PASSWORD=your_password
+  DB_NAME=mydb
+  PG_VERSION=16
+  ```
+</Warning>
+
+### Container name vs Service name
+
+<Tabs>
+  <Tab title="Service name">
+    ```yaml
+    services:
+      db:           # <- service name : "db"
+        image: postgres:16-alpine
+    ```
+
+    - **Obligatoire** (c'est la cle YAML)
+    - Sert de **nom DNS interne** dans le reseau Docker
+    - Les autres services se connectent via `db:5432`
+    - Utilise par `docker compose` : `docker compose logs db`
+  </Tab>
+  <Tab title="Container name">
+    ```yaml
+    services:
+      db:
+        image: postgres:16-alpine
+        container_name: my-postgres   # <- container name
+    ```
+
+    - **Optionnel**
+    - Nom affiche dans `docker ps`
+    - Par defaut : `<dossier>-<service>-<numero>`
+    - Utilise par `docker` : `docker logs my-postgres`
+  </Tab>
+</Tabs>
+
+| | Service name | Container name |
+|---|---|---|
+| Definition | Cle YAML du service | Propriete `container_name` |
+| Obligatoire | Oui | Non |
+| DNS interne | Oui | Non |
+| `docker compose` | Oui | Non |
+| `docker ps` | Non | Oui |
+
+<Tip>
+  Regle simple : utilisez le **service name** pour la communication entre conteneurs et la CLI `docker compose`. Le `container_name` est utile uniquement pour la lisibilite dans `docker ps`.
+</Tip>
+
+## Volumes dans Compose
+
+### Named volumes (production)
+
+Les volumes nommes sont geres par Docker et persistent independamment des conteneurs :
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+volumes:
+  pg_data:             # declaration obligatoire en section top-level
+```
+
+<Note>
+  Les volumes nommes doivent etre declares dans la section `volumes:` de premier niveau du fichier Compose.
+</Note>
+
+### Bind mounts (developpement)
+
+Les bind mounts lient un repertoire de l'hote directement dans le conteneur. Ideal pour le **hot-reload** en developpement :
+
+```yaml
+services:
+  app:
+    build: .
+    volumes:
+      - ./src:/app/src         # code source synchronise
+      - ./public:/app/public   # fichiers statiques synchronises
+```
+
+### Read-only `:ro`
+
+Pour monter un volume en lecture seule, ajoutez `:ro` :
+
+```yaml
+services:
+  app:
+    image: mon-app:latest
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+```
+
+### Volume anonyme pour exclure node_modules
+
+Lorsqu'on utilise un bind mount pour le code source, le `node_modules` de l'hote ecrase celui du conteneur. La solution : un **volume anonyme** :
+
+```yaml
+services:
+  app:
+    build: .
+    volumes:
+      - ./src:/app/src              # bind mount du code
+      - /app/node_modules           # volume anonyme : preserve le node_modules du conteneur
+```
+
+<AccordionGroup>
+  <Accordion title="Pourquoi le volume anonyme est necessaire ?">
+    Sans le volume anonyme, voici ce qui se passe :
+
+    1. `docker compose build` installe les dependances dans `/app/node_modules` (dans l'image)
+    2. Le bind mount `./src:/app/src` monte le code source
+    3. Si le bind mount est `./:/app/`, il **ecrase** tout `/app/`, y compris `node_modules`
+    4. Le `node_modules` de l'hote (potentiellement vide ou incompatible) remplace celui du conteneur
+
+    Le volume anonyme `/app/node_modules` cree un volume Docker qui **preserve** le `node_modules` installe dans l'image, meme si le repertoire parent est monte en bind.
+  </Accordion>
+  <Accordion title="Pattern classique : bind mount + volume anonyme">
+    ```yaml
+    services:
+      app:
+        build: .
+        volumes:
+          - .:/app                  # tout le code source
+          - /app/node_modules       # proteger node_modules
+        ports:
+          - "3000:3000"
+        command: npm run dev        # hot-reload
+    ```
+
+    Ce pattern permet :
+    - **Modification du code** sur l'hote refletee instantanement dans le conteneur
+    - **`node_modules`** installe dans le conteneur preserve et isole
+    - **Hot-reload** fonctionnel avec Vite, Next.js, Nodemon, etc.
+  </Accordion>
+</AccordionGroup>
+
+### Cycle de vie des volumes
+
+```bash
+# Arreter les conteneurs, CONSERVER les volumes
+docker compose down
+
+# Arreter les conteneurs ET SUPPRIMER les volumes
+docker compose down -v
+```
+
+<Warning>
+  `docker compose down -v` **supprime definitivement** les donnees des volumes nommes (base de donnees, fichiers uploades, etc.). A utiliser uniquement pour un reset complet.
+</Warning>
+
+## Reseaux dans Compose
+
+### Reseau par defaut
+
+Docker Compose cree **automatiquement** un reseau pour chaque projet. Tous les services du fichier Compose y sont connectes :
+
+```yaml
+services:
+  app:
+    image: mon-app:latest
+    # automatiquement connecte au reseau par defaut
+
+  db:
+    image: postgres:16-alpine
+    # automatiquement connecte au meme reseau
+```
+
+Le reseau par defaut est nomme `<nom-du-dossier>_default`.
+
+### DNS interne automatique
+
+Au sein du reseau Compose, chaque service est accessible par son **nom de service** comme nom DNS :
+
+```yaml
+services:
+  app:
+    image: mon-app:latest
+    environment:
+      # "db" est resolu automatiquement vers l'IP du conteneur PostgreSQL
+      - DATABASE_URL=postgres://user:pass@db:5432/mydb
+      # "redis" est resolu vers l'IP du conteneur Redis
+      - REDIS_URL=redis://redis:6379
+
+  db:
+    image: postgres:16-alpine
+
+  redis:
+    image: redis:7-alpine
+```
+
+<Tip>
+  Vous n'avez jamais besoin d'utiliser des adresses IP entre les services. Utilisez toujours le **nom du service** comme hostname : `db`, `redis`, `app`, etc.
+</Tip>
+
+### Reseaux personnalises et isolation
+
+Pour isoler des groupes de services, creez des reseaux dedies :
+
+```yaml
+services:
+  frontend:
+    image: mon-frontend:latest
+    ports:
+      - "3000:3000"
+    networks:
+      - frontend-network
+
+  backend:
+    image: mon-backend:latest
+    networks:
+      - frontend-network     # communique avec le frontend
+      - backend-network      # communique avec la DB
+
+  db:
+    image: postgres:16-alpine
+    networks:
+      - backend-network      # isole du frontend
+
+networks:
+  frontend-network:
+  backend-network:
+```
+
+```
+  Internet
+     |
+ [frontend]  ---- frontend-network ---- [backend]
+                                             |
+                                       backend-network
+                                             |
+                                           [db]
+
+  -> frontend ne peut PAS acceder a db directement
+  -> backend fait le pont entre les deux reseaux
+```
+
+### expose vs ports
+
+| | `ports` | `expose` |
+|---|---|---|
+| Accessible depuis l'hote | Oui | Non |
+| Accessible entre conteneurs | Oui | Oui |
+| Syntaxe | `"HOST:CONTAINER"` | `"PORT"` |
+| Usage | Services publics (frontend, API) | Services internes (DB, cache) |
+
+```yaml
+services:
+  frontend:
+    image: mon-frontend:latest
+    ports:
+      - "3000:3000"        # accessible depuis le navigateur
+
+  backend:
+    image: mon-backend:latest
+    expose:
+      - "4000"             # accessible uniquement par les autres conteneurs
+
+  db:
+    image: postgres:16-alpine
+    expose:
+      - "5432"             # accessible uniquement par le backend
+```
+
+<Note>
+  En pratique, `expose` est surtout informatif dans Compose. Les conteneurs sur le meme reseau peuvent communiquer sur n'importe quel port meme sans `expose`. Mais l'utiliser rend la configuration plus explicite et lisible.
+</Note>
+
+## Health checks et dependances
+
+### depends_on simple (ordre seulement)
+
+```yaml
+services:
+  app:
+    build: .
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres:16-alpine
+  redis:
+    image: redis:7-alpine
+```
+
+<Warning>
+  `depends_on` sans condition garantit uniquement l'**ordre de demarrage** des conteneurs. Il ne verifie **pas** que le service est pret a recevoir des connexions. PostgreSQL peut mettre plusieurs secondes a initialiser sa base apres le demarrage du conteneur.
+</Warning>
+
+### Le probleme : service pas encore pret
+
+```
+1. docker compose up -d
+2. PostgreSQL demarre...                    (conteneur "running")
+3. App demarre immediatement                (depends_on satisfait)
+4. App tente de se connecter a PostgreSQL   (ERREUR : DB pas prete)
+5. PostgreSQL finit son initialisation      (trop tard, l'app a crashe)
+```
+
+### Health checks
+
+Un health check permet a Docker de verifier periodiquement si un service est reellement **pret** :
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=mydb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mydb"]
+      interval: 5s          # verifier toutes les 5 secondes
+      timeout: 5s           # timeout de chaque verification
+      retries: 5            # nombre de tentatives avant "unhealthy"
+      start_period: 10s     # delai de grace au demarrage
+```
+
+| Parametre | Description | Exemple |
+|---|---|---|
+| `test` | Commande de verification | `pg_isready`, `curl`, `redis-cli ping` |
+| `interval` | Intervalle entre les verifications | `5s`, `10s`, `30s` |
+| `timeout` | Temps max pour chaque verification | `5s`, `10s` |
+| `retries` | Tentatives avant statut `unhealthy` | `3`, `5`, `10` |
+| `start_period` | Delai de grace initial (pas de `unhealthy`) | `10s`, `30s` |
+
+### depends_on avec condition
+
+```yaml
+services:
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy           # attendre que la DB soit prete
+      redis:
+        condition: service_healthy           # attendre que Redis soit pret
+      migrations:
+        condition: service_completed_successfully  # attendre la fin des migrations
+```
+
+| Condition | Description |
+|---|---|
+| `service_started` | Le conteneur est demarre (par defaut) |
+| `service_healthy` | Le health check passe |
+| `service_completed_successfully` | Le conteneur s'est termine avec le code 0 |
+
+### Exemples de health checks par technologie
+
+<Tabs>
+  <Tab title="PostgreSQL">
+    ```yaml
+    services:
+      db:
+        image: postgres:16-alpine
+        environment:
+          - POSTGRES_USER=user
+          - POSTGRES_PASSWORD=secret
+          - POSTGRES_DB=mydb
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U user -d mydb"]
+          interval: 5s
+          timeout: 5s
+          retries: 5
+          start_period: 10s
+    ```
+  </Tab>
+  <Tab title="MySQL">
+    ```yaml
+    services:
+      db:
+        image: mysql:8
+        environment:
+          - MYSQL_ROOT_PASSWORD=secret
+          - MYSQL_DATABASE=mydb
+        healthcheck:
+          test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+          interval: 5s
+          timeout: 5s
+          retries: 5
+          start_period: 15s
+    ```
+  </Tab>
+  <Tab title="Redis">
+    ```yaml
+    services:
+      redis:
+        image: redis:7-alpine
+        healthcheck:
+          test: ["CMD", "redis-cli", "ping"]
+          interval: 5s
+          timeout: 3s
+          retries: 3
+    ```
+  </Tab>
+  <Tab title="API (HTTP)">
+    ```yaml
+    services:
+      api:
+        build: .
+        healthcheck:
+          test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+          interval: 10s
+          timeout: 5s
+          retries: 3
+          start_period: 15s
+    ```
+
+    Si `curl` n'est pas installe dans l'image :
+
+    ```yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    ```
+  </Tab>
+</Tabs>
+
+## Commandes Docker Compose essentielles
+
+| Commande | Description |
+|---|---|
+| `docker compose up -d` | Demarrer tous les services en arriere-plan |
+| `docker compose down` | Arreter et supprimer les conteneurs et reseaux |
+| `docker compose down -v` | Idem + supprimer les volumes |
+| `docker compose ps` | Lister les services et leur etat |
+| `docker compose logs -f` | Suivre les logs en temps reel |
+| `docker compose logs -f app` | Logs d'un service specifique |
+| `docker compose exec app bash` | Ouvrir un shell dans un conteneur en cours |
+| `docker compose run app npm test` | Lancer une commande ponctuelle dans un nouveau conteneur |
+| `docker compose build` | Construire les images |
+| `docker compose build --no-cache` | Reconstruire sans cache |
+| `docker compose up --build -d` | Reconstruire et demarrer |
+| `docker compose restart` | Redemarrer tous les services |
+| `docker compose restart app` | Redemarrer un service specifique |
+| `docker compose config` | Valider et afficher la configuration finale |
+| `docker compose --scale app=3` | Lancer 3 instances du service `app` |
+
+<Tip>
+  `docker compose config` est tres utile pour debugger la substitution de variables et verifier la configuration finale apres resolution des `.env`, overrides, etc.
+</Tip>
+
+## Override files
+
+### Principe
+
+Docker Compose supporte un systeme d'**override** pour adapter la configuration selon l'environnement :
+
+```
+docker-compose.yml              <- configuration de base
+docker-compose.override.yml     <- surcharge dev (charge automatiquement)
+docker-compose.prod.yml         <- surcharge production (explicite)
+```
+
+<Steps>
+  <Step title="Fichier de base : docker-compose.yml">
+    Contient la configuration commune a tous les environnements :
+
+    ```yaml
+    services:
+      app:
+        image: mon-app:latest
+        environment:
+          - NODE_ENV=production
+        depends_on:
+          db:
+            condition: service_healthy
+
+      db:
+        image: postgres:16-alpine
+        environment:
+          - POSTGRES_USER=${DB_USER}
+          - POSTGRES_PASSWORD=${DB_PASSWORD}
+          - POSTGRES_DB=${DB_NAME}
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+          interval: 5s
+          timeout: 5s
+          retries: 5
+        volumes:
+          - pg_data:/var/lib/postgresql/data
+
+    volumes:
+      pg_data:
+    ```
+  </Step>
+  <Step title="Override dev : docker-compose.override.yml">
+    Charge **automatiquement** au-dessus du fichier de base (sans `-f`) :
+
+    ```yaml
+    services:
+      app:
+        build: .
+        ports:
+          - "3000:3000"
+        environment:
+          - NODE_ENV=development
+          - DEBUG=true
+        volumes:
+          - .:/app
+          - /app/node_modules
+        command: npm run dev
+
+      adminer:
+        image: adminer
+        ports:
+          - "8080:8080"
+    ```
+  </Step>
+  <Step title="Override production : docker-compose.prod.yml">
+    Utilise **explicitement** avec le flag `-f` :
+
+    ```yaml
+    services:
+      app:
+        image: registry.example.com/mon-app:${APP_VERSION}
+        restart: unless-stopped
+        environment:
+          - NODE_ENV=production
+        ports:
+          - "80:3000"
+
+      db:
+        restart: unless-stopped
+    ```
+  </Step>
+</Steps>
+
+### Utilisation
+
+```bash
+# Developpement (charge automatiquement docker-compose.override.yml)
+docker compose up -d
+
+# Production (fichiers explicites, PAS d'override auto)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Avec un fichier .env specifique
+docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+<Note>
+  Quand vous utilisez `-f` explicitement, le fichier `docker-compose.override.yml` n'est **plus charge automatiquement**. Vous devez lister tous les fichiers souhaites.
+</Note>
+
+## Exemple complet
+
+Un stack **PostgreSQL + Adminer** avec health checks, volumes persistes, reseau dedie et variables d'environnement externalisees.
+
+<Steps>
+  <Step title="Fichier .env">
+    ```bash
+    # .env
+    POSTGRES_USER=admin
+    POSTGRES_PASSWORD=supersecret
+    POSTGRES_DB=myapp
+    PG_VERSION=16
+    ADMINER_PORT=8080
+    ```
+  </Step>
+  <Step title="Fichier docker-compose.yml">
+    ```yaml
+    services:
+      db:
+        image: postgres:${PG_VERSION:-16}-alpine
+        container_name: myapp-db
+        restart: unless-stopped
+        environment:
+          POSTGRES_USER: ${POSTGRES_USER}
+          POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+          POSTGRES_DB: ${POSTGRES_DB}
+        ports:
+          - "127.0.0.1:5432:5432"
+        volumes:
+          - pg_data:/var/lib/postgresql/data
+        networks:
+          - backend
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+          interval: 5s
+          timeout: 5s
+          retries: 5
+          start_period: 10s
+
+      adminer:
+        image: adminer:latest
+        container_name: myapp-adminer
+        restart: unless-stopped
+        ports:
+          - "${ADMINER_PORT:-8080}:8080"
+        networks:
+          - backend
+        depends_on:
+          db:
+            condition: service_healthy
+        environment:
+          ADMINER_DEFAULT_SERVER: db
+
+    volumes:
+      pg_data:
+
+    networks:
+      backend:
+    ```
+  </Step>
+  <Step title="Lancer le stack">
+    ```bash
+    # Demarrer
+    docker compose up -d
+
+    # Verifier l'etat
+    docker compose ps
+
+    # Consulter les logs
+    docker compose logs -f db
+
+    # Acceder a Adminer
+    # http://localhost:8080
+    # Serveur: db | Utilisateur: admin | Mot de passe: supersecret | Base: myapp
+    ```
+  </Step>
+  <Step title="Arreter le stack">
+    ```bash
+    # Arreter (les donnees sont conservees dans le volume)
+    docker compose down
+
+    # Arreter et supprimer toutes les donnees
+    docker compose down -v
+    ```
+  </Step>
+</Steps>
+
+<AccordionGroup>
+  <Accordion title="Fichier .env.example a commit">
+    ```bash
+    # .env.example
+    POSTGRES_USER=your_user
+    POSTGRES_PASSWORD=your_password
+    POSTGRES_DB=your_database
+    PG_VERSION=16
+    ADMINER_PORT=8080
+    ```
+  </Accordion>
+  <Accordion title="Fichier .gitignore correspondant">
+    ```bash
+    # Secrets
+    .env
+    .env.local
+    .env.*.local
+
+    # Volumes Docker
+    data/
+    ```
+  </Accordion>
+</AccordionGroup>

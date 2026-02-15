@@ -1,0 +1,1189 @@
+---
+title: "Deploiement en Production"
+description: "Configuration production, reverse proxy, secrets et bonnes pratiques"
+---
+
+Deployer une application en production ne se resume pas a lancer `docker compose up` sur un serveur. Il faut gerer les **secrets**, configurer un **reverse proxy**, definir des **limites de ressources**, mettre en place des **health checks**, et structurer les **logs**. Cette page couvre toutes ces etapes.
+
+## Dev vs Prod : les differences essentielles
+
+En developpement, on optimise pour la **vitesse d'iteration**. En production, on optimise pour la **fiabilite, la securite et la performance**.
+
+<Tabs>
+  <Tab title="Environnement Dev">
+    ```yaml
+    # docker-compose.dev.yml
+    services:
+      api:
+        build:
+          context: .
+          target: development        # Stage de dev du Dockerfile
+        volumes:
+          - ./src:/app/src           # Bind mount pour hot-reload
+        ports:
+          - "3001:3001"              # Port expose directement
+        environment:
+          - NODE_ENV=development
+          - DEBUG=app:*              # Logs verbeux
+    ```
+
+    - Hot-reload via bind mounts
+    - Logs verbeux et source maps activees
+    - Ports exposes directement sur l'hote
+    - Pas de limites de ressources
+    - Secrets en clair dans `.env`
+  </Tab>
+  <Tab title="Environnement Prod">
+    ```yaml
+    # docker-compose.prod.yml
+    services:
+      api:
+        build:
+          context: .
+          target: production         # Stage de prod (code compile)
+        restart: unless-stopped      # Redemarrage automatique
+        deploy:
+          resources:
+            limits:
+              cpus: "1.0"
+              memory: 512M
+        environment:
+          - NODE_ENV=production
+        logging:
+          driver: json-file
+          options:
+            max-size: "10m"
+            max-file: "3"
+    ```
+
+    - Code compile et optimise
+    - Logs structures JSON
+    - Source maps desactivees
+    - Reverse proxy devant les services
+    - Images immuables (pas de bind mounts)
+    - Resource limits obligatoires
+    - Secrets via variables d'environnement
+  </Tab>
+</Tabs>
+
+### Tableau comparatif complet
+
+| Aspect | Developpement | Production |
+|---|---|---|
+| **Build** | Pas de build, interpretation directe | Code compile, minifie, optimise |
+| **Hot-reload** | Oui (nodemon, vite dev) | Non, image immuable |
+| **Volumes** | Bind mounts (`./src:/app/src`) | Volumes Docker uniquement (BDD) |
+| **Ports** | Exposes directement (`-p 3001:3001`) | Derriere un reverse proxy |
+| **Logs** | Console, verbeux, colores | JSON structure, rotation, centralises |
+| **NODE_ENV** | `development` | `production` |
+| **Source maps** | Activees (debug facile) | Desactivees (securite) |
+| **Resource limits** | Aucun | CPU et memoire limites |
+| **Secrets** | `.env` local | Variables systeme, secrets manager |
+| **Restart policy** | `no` (defaut) | `unless-stopped` |
+
+<Warning>
+  Ne jamais deployer en production avec une configuration de developpement. Les bind mounts exposent votre code source, les logs verbeux ralentissent l'application, et l'absence de limites de ressources peut faire tomber le serveur entier.
+</Warning>
+
+## Configuration multi-environnements
+
+### Principe 12-Factor App
+
+La methode **12-Factor App** definit les bonnes pratiques pour construire des applications cloud-native. Le **facteur III** est particulierement important pour le deploiement.
+
+<Note>
+  **Facteur III -- Stocker la configuration dans l'environnement.** Le code doit etre **immuable** (le meme binaire tourne partout), et la configuration doit etre **variable** (differente par environnement). La separation stricte entre code et configuration permet de deployer la meme image en dev, staging et production.
+</Note>
+
+```
+Code (immuable)                     Configuration (variable)
+┌──────────────────────┐           ┌──────────────────────┐
+│  Application         │           │  DATABASE_URL        │
+│  Dependances         │           │  API_KEY             │
+│  Dockerfile          │     +     │  NODE_ENV            │
+│  Logique metier      │           │  PORT                │
+│  ...                 │           │  SMTP_HOST           │
+└──────────────────────┘           └──────────────────────┘
+         │                                    │
+         └──── Meme image partout ────────────┘
+                                     │
+                          ┌──────────┼──────────┐
+                          ▼          ▼          ▼
+                        Dev      Staging      Prod
+```
+
+### Fichiers .env
+
+Les fichiers `.env` permettent de centraliser les variables d'environnement d'un projet.
+
+| Fichier | Versionne ? | Contenu | Role |
+|---|---|---|---|
+| `.env` | Non | Secrets reels | Utilise localement, jamais commite |
+| `.env.example` | Oui | Template sans secrets | Documentation pour l'equipe |
+| `.env.development` | Non | Config dev specifique | Variables dev locales |
+| `.env.production` | Non | Config prod | Variables de production |
+
+```bash
+# .env.example (VERSIONNE -- template pour l'equipe)
+DATABASE_URL=postgres://user:password@host:5432/dbname
+JWT_SECRET=your-secret-here
+SMTP_HOST=smtp.example.com
+SMTP_USER=your-email@example.com
+SMTP_PASSWORD=your-password-here
+NODE_ENV=development
+```
+
+```bash
+# .env (NON VERSIONNE -- contient les vrais secrets)
+DATABASE_URL=postgres://admin:s3cur3P@ss!@db:5432/myapp
+JWT_SECRET=a8f2e9c1b4d7...
+SMTP_HOST=smtp.sendgrid.net
+SMTP_USER=apikey
+SMTP_PASSWORD=SG.xxxxx.xxxxx
+NODE_ENV=development
+```
+
+```gitignore
+# .gitignore -- OBLIGATOIRE
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+```
+
+<Tip>
+  Toujours creer un fichier `.env.example` et le versionner. C'est la documentation vivante de toutes les variables d'environnement necessaires au projet. Quand un nouveau developpeur rejoint l'equipe, il copie `.env.example` en `.env` et remplit les valeurs.
+</Tip>
+
+### Override files Docker Compose
+
+Docker Compose permet de **superposer** plusieurs fichiers de configuration. Le fichier de base contient la structure commune, et les fichiers d'override ajoutent ou modifient des proprietes par environnement.
+
+```
+docker-compose.yml          (base commune)
+docker-compose.dev.yml      (override developpement)
+docker-compose.prod.yml     (override production)
+```
+
+<Tabs>
+  <Tab title="Base commune">
+    ```yaml
+    # docker-compose.yml
+    services:
+      api:
+        build:
+          context: .
+        env_file:
+          - .env
+        depends_on:
+          db:
+            condition: service_healthy
+
+      frontend:
+        build:
+          context: ./frontend
+
+      db:
+        image: postgres:16-alpine
+        volumes:
+          - pg_data:/var/lib/postgresql/data
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U postgres"]
+          interval: 10s
+          timeout: 5s
+          retries: 5
+
+    volumes:
+      pg_data:
+    ```
+  </Tab>
+  <Tab title="Override Dev">
+    ```yaml
+    # docker-compose.dev.yml
+    services:
+      api:
+        build:
+          target: development
+        volumes:
+          - ./src:/app/src          # Bind mount hot-reload
+        ports:
+          - "3001:3001"             # Port expose
+        environment:
+          - NODE_ENV=development
+          - DEBUG=app:*
+
+      frontend:
+        build:
+          target: development
+        volumes:
+          - ./frontend/src:/app/src
+        ports:
+          - "5173:5173"             # Vite dev server
+
+      db:
+        ports:
+          - "5432:5432"             # Acces direct BDD
+    ```
+  </Tab>
+  <Tab title="Override Prod">
+    ```yaml
+    # docker-compose.prod.yml
+    services:
+      api:
+        build:
+          target: production
+        restart: unless-stopped
+        deploy:
+          resources:
+            limits:
+              cpus: "1.0"
+              memory: 512M
+            reservations:
+              cpus: "0.5"
+              memory: 256M
+        environment:
+          - NODE_ENV=production
+        logging:
+          driver: json-file
+          options:
+            max-size: "10m"
+            max-file: "3"
+
+      frontend:
+        build:
+          target: production
+        restart: unless-stopped
+
+      db:
+        restart: unless-stopped
+        deploy:
+          resources:
+            limits:
+              cpus: "2.0"
+              memory: 2G
+    ```
+  </Tab>
+</Tabs>
+
+```bash
+# Lancer en developpement
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Lancer en production
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+<Note>
+  L'ordre des fichiers `-f` est important. Le dernier fichier **ecrase** les valeurs du precedent. Les proprietes non redefinies sont conservees depuis le fichier de base.
+</Note>
+
+## Gestion des secrets
+
+### Qu'est-ce qu'un secret ?
+
+Un secret est toute information sensible dont la fuite compromettrait la securite de l'application ou de l'infrastructure.
+
+<CardGroup cols={2}>
+  <Card title="Acces aux donnees" icon="database">
+    Mots de passe de bases de donnees, connection strings, credentials de services externes.
+  </Card>
+  <Card title="Authentification" icon="key">
+    Tokens API, cles privees SSH/TLS, JWT secrets, OAuth client secrets.
+  </Card>
+  <Card title="Communication" icon="envelope">
+    Credentials SMTP, cles API d'envoi d'emails, webhooks secrets.
+  </Card>
+  <Card title="Infrastructure" icon="cloud">
+    Cles d'acces cloud (AWS, GCP, Azure), tokens de registries Docker, cles de chiffrement.
+  </Card>
+</CardGroup>
+
+### Dangers du commit de secrets
+
+<Warning>
+  Des **bots automatises scannent GitHub 24h/24, 7j/7** a la recherche de secrets commites par erreur. Un secret pousse sur un depot public est compromis en **quelques secondes**, meme si vous le supprimez immediatement (il reste dans l'historique Git).
+</Warning>
+
+Des incidents reels demontrent la gravite du probleme :
+
+| Incident | Consequence |
+|---|---|
+| **Uber (2016)** | Credentials AWS commites sur GitHub. Hack de 57 millions de comptes. Amende de $148M. |
+| **Toyota (2023)** | Cle d'acces exposee pendant 5 ans. 3.1 millions de comptes clients exposes. |
+| **Samsung (2022)** | Code source et cles cryptographiques fuites. 190 Go de donnees sensibles. |
+
+### Protection des secrets
+
+<Steps>
+  <Step title="Configurer .gitignore">
+    Le premier rempart : empecher les fichiers sensibles d'etre suivis par Git.
+
+    ```gitignore
+    # Fichiers d'environnement
+    .env
+    .env.local
+    .env.*.local
+    .env.development
+    .env.production
+
+    # Cles et certificats
+    *.pem
+    *.key
+    *.p12
+    *.pfx
+
+    # Dossier de secrets
+    secrets/
+    ```
+  </Step>
+  <Step title="Creer un .env.example">
+    Fournir un template sans les valeurs reelles pour documenter les variables necessaires.
+
+    ```bash
+    # .env.example
+    DATABASE_URL=postgres://user:password@localhost:5432/dbname
+    JWT_SECRET=change-me-in-production
+    API_KEY=your-api-key-here
+    SMTP_PASSWORD=your-smtp-password
+    ```
+  </Step>
+  <Step title="Scanner les secrets avec des outils automatises">
+    Integrer des outils de detection dans le workflow de developpement.
+
+    ```bash
+    # gitleaks -- scanner l'historique complet du depot
+    gitleaks detect --source . --verbose
+
+    # truffleHog -- detecter les secrets haute entropie
+    trufflehog git file://. --only-verified
+
+    # Installation de gitleaks
+    brew install gitleaks          # macOS
+    ```
+  </Step>
+  <Step title="Ajouter un pre-commit hook">
+    Empecher les commits contenant des secrets avant qu'ils ne soient pousses.
+
+    ```bash
+    # .pre-commit-config.yaml
+    repos:
+      - repo: https://github.com/gitleaks/gitleaks
+        rev: v8.18.0
+        hooks:
+          - id: gitleaks
+    ```
+
+    ```bash
+    # Installer et activer les hooks
+    pip install pre-commit
+    pre-commit install
+    ```
+  </Step>
+</Steps>
+
+### Solutions par environnement
+
+<Tabs>
+  <Tab title="Developpement">
+    En developpement local, un fichier `.env` est acceptable car les secrets ne sont pas reels (base de donnees locale, cles de test).
+
+    ```bash
+    # .env local (acceptable en dev)
+    DATABASE_URL=postgres://postgres:postgres@localhost:5432/myapp_dev
+    JWT_SECRET=dev-secret-not-for-production
+    ```
+  </Tab>
+  <Tab title="Production">
+    En production, les secrets ne doivent **jamais** etre dans des fichiers. Utilisez des solutions dediees.
+
+    | Solution | Fournisseur | Cas d'usage |
+    |---|---|---|
+    | **Variables systeme** | OS / Docker | Deploiements simples (VPS) |
+    | **AWS Secrets Manager** | AWS | Infrastructure AWS |
+    | **HashiCorp Vault** | Multi-cloud | Gestion centralisee, rotation automatique |
+    | **Azure Key Vault** | Azure | Infrastructure Azure |
+    | **Google Secret Manager** | GCP | Infrastructure GCP |
+
+    ```bash
+    # Injecter des secrets via variables d'environnement systeme
+    export DATABASE_URL="postgres://admin:s3cur3@db:5432/prod"
+    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+    ```
+  </Tab>
+  <Tab title="CI/CD">
+    Les pipelines CI/CD ont leurs propres mecanismes de gestion de secrets.
+
+    ```yaml
+    # GitHub Actions -- secrets configures dans Settings > Secrets
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Deploy
+            env:
+              DATABASE_URL: ${{ secrets.DATABASE_URL }}
+              JWT_SECRET: ${{ secrets.JWT_SECRET }}
+            run: ./deploy.sh
+    ```
+
+    ```yaml
+    # GitLab CI -- variables dans Settings > CI/CD > Variables
+    deploy:
+      script:
+        - docker compose up -d
+      variables:
+        DATABASE_URL: $DATABASE_URL    # Injectee depuis GitLab
+    ```
+  </Tab>
+</Tabs>
+
+### Que faire si un secret a ete commite
+
+Si un secret se retrouve dans l'historique Git, il est **deja compromis**. Meme un `git revert` ne suffit pas car le secret reste visible dans l'historique.
+
+<Steps>
+  <Step title="Revoquer immediatement le secret">
+    Changez le mot de passe, regenerez le token API, ou invalidez la cle. C'est la **priorite absolue**, avant toute autre action.
+  </Step>
+  <Step title="Supprimer de l'historique Git">
+    Utilisez **BFG Repo-Cleaner** pour reecrire l'historique et supprimer le secret de tous les commits.
+
+    ```bash
+    # Installer BFG
+    brew install bfg
+
+    # Supprimer un fichier de tout l'historique
+    bfg --delete-files .env
+
+    # Supprimer une chaine specifique
+    bfg --replace-text passwords.txt
+
+    # Nettoyer et forcer le push
+    git reflog expire --expire=now --all
+    git gc --prune=now --aggressive
+    git push --force
+    ```
+  </Step>
+  <Step title="Notifier l'equipe">
+    Informez toute l'equipe de la fuite potentielle. Si des donnees utilisateur sont concernees, suivez les procedures de notification RGPD/CNIL.
+  </Step>
+</Steps>
+
+<Warning>
+  Le `git push --force` reecrit l'historique du depot distant. Tous les membres de l'equipe devront re-cloner le depot ou realigner leur branche locale. Coordonnez cette operation.
+</Warning>
+
+## Docker Compose en production
+
+### Est-ce une bonne pratique ?
+
+<Tabs>
+  <Tab title="Quand c'est adapte">
+    Docker Compose en production est un choix pertinent pour :
+
+    - **PME et startups** avec des ressources limitees
+    - **Applications simples** (quelques services)
+    - **Serveurs dedies ou VPS** (un seul serveur)
+    - **Equipes reduites** sans expertise Kubernetes
+
+    ```
+    Internet → VPS (4 CPU, 8 Go RAM)
+                  │
+                  ├── Nginx (reverse proxy)
+                  ├── Frontend (React/Vue)
+                  ├── API (Node.js)
+                  └── PostgreSQL
+
+    Docker Compose orchestre tout sur un seul serveur.
+    ```
+  </Tab>
+  <Tab title="Quand ca ne suffit plus">
+    Docker Compose atteint ses limites quand vous avez besoin de :
+
+    - **Scaling automatique** (augmenter/reduire les replicas selon la charge)
+    - **Haute disponibilite** (basculement automatique si un serveur tombe)
+    - **Multi-serveurs** (repartir les services sur plusieurs machines)
+    - **Zero-downtime deployment** natif
+
+    Dans ces cas, migrez vers **Kubernetes**, **Docker Swarm**, ou des **conteneurs manages** (AWS Fargate, Google Cloud Run).
+  </Tab>
+</Tabs>
+
+<Tip>
+  "Commencer simple, complexifier si necessaire." Docker Compose couvre 80% des besoins. Ne passez a Kubernetes que si vous avez des besoins reels de scaling ou de haute disponibilite. La complexite a un cout.
+</Tip>
+
+### Restart policies
+
+En production, les conteneurs doivent redemarrer automatiquement en cas de crash ou de reboot du serveur.
+
+| Policy | Comportement | Cas d'usage |
+|---|---|---|
+| `no` | Ne redemarre jamais (defaut) | Developpement |
+| `always` | Redemarre toujours, meme apres `docker stop` | Rarement utilise |
+| `unless-stopped` | Redemarre sauf si arrete manuellement | **Production (recommande)** |
+| `on-failure` | Redemarre uniquement si exit code != 0 | Taches ponctuelles |
+
+```yaml
+services:
+  api:
+    image: mon-app:latest
+    restart: unless-stopped    # Recommande en production
+```
+
+<Note>
+  `unless-stopped` est le meilleur choix pour la production. Le conteneur redemarre automatiquement en cas de **crash** et au **reboot du serveur**, mais reste arrete si vous l'avez stoppe manuellement avec `docker stop` (maintenance planifiee).
+</Note>
+
+### Resource limits
+
+Sans limites de ressources, un conteneur peut consommer **toute la memoire ou tout le CPU** du serveur, faisant tomber les autres services.
+
+```yaml
+services:
+  api:
+    image: mon-app:latest
+    deploy:
+      resources:
+        limits:               # Maximum autorise
+          cpus: "1.0"         # 1 coeur CPU max
+          memory: 512M        # 512 Mo RAM max
+        reservations:         # Minimum garanti
+          cpus: "0.25"
+          memory: 128M
+
+  db:
+    image: postgres:16-alpine
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+```
+
+<AccordionGroup>
+  <Accordion title="Exemple : repartition sur un serveur 4 CPU / 8 Go RAM">
+    | Service | CPU limit | CPU reserved | RAM limit | RAM reserved |
+    |---|---|---|---|---|
+    | **Nginx** | 0.5 | 0.1 | 128M | 64M |
+    | **Frontend** | 0.5 | 0.25 | 256M | 128M |
+    | **API** | 1.0 | 0.25 | 512M | 128M |
+    | **PostgreSQL** | 2.0 | 0.5 | 2G | 512M |
+    | **Total limits** | 4.0 | 1.1 | ~2.9G | ~832M |
+    | **Reste pour l'OS** | - | - | ~5.1G | - |
+
+    Les **limits** representent le maximum que chaque service peut consommer en cas de pic. Les **reservations** garantissent un minimum disponible meme sous forte charge.
+  </Accordion>
+  <Accordion title="Que se passe-t-il si un conteneur depasse ses limites ?">
+    - **Memoire** : si le conteneur depasse sa limite de RAM, Docker le **tue** immediatement (OOM Kill). Avec `restart: unless-stopped`, il redemarre automatiquement.
+    - **CPU** : le conteneur est **limite** (throttle) mais pas tue. Il tourne simplement plus lentement.
+
+    ```bash
+    # Verifier l'utilisation des ressources en temps reel
+    docker stats
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Health checks (obligatoire en production)
+
+Un health check permet a Docker de verifier que le conteneur fonctionne **reellement**, pas seulement qu'il tourne. Si le health check echoue, Docker marque le conteneur comme `unhealthy` et peut le redemarrer.
+
+```yaml
+services:
+  api:
+    image: mon-app:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s          # Verifier toutes les 30 secondes
+      timeout: 10s           # Timeout de la verification
+      retries: 3             # 3 echecs avant de marquer unhealthy
+      start_period: 40s      # Delai de grace au demarrage
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+```
+
+| Parametre | Description | Valeur recommandee |
+|---|---|---|
+| `test` | Commande de verification | `curl`, `pg_isready`, `wget` |
+| `interval` | Frequence des verifications | 10s - 30s |
+| `timeout` | Duree maximale du test | 5s - 10s |
+| `retries` | Echecs avant `unhealthy` | 3 - 5 |
+| `start_period` | Delai de grace au demarrage | 20s - 60s |
+
+<Tip>
+  Creez un endpoint `/health` dans votre API qui verifie les dependances critiques (base de donnees, cache, services externes). Un simple `200 OK` ne suffit pas si la BDD est injoignable.
+</Tip>
+
+### Logs en production
+
+En production, les logs doivent etre **structures**, **limites en taille**, et **exploitables**.
+
+<Tabs>
+  <Tab title="Configuration Docker">
+    Docker capture automatiquement tout ce qui est ecrit sur `stdout` et `stderr`. Configurez la rotation pour eviter de remplir le disque.
+
+    ```yaml
+    services:
+      api:
+        image: mon-app:latest
+        logging:
+          driver: json-file       # Driver par defaut
+          options:
+            max-size: "10m"       # Taille max par fichier de log
+            max-file: "3"         # Nombre de fichiers de rotation
+    ```
+
+    Sans rotation, un conteneur actif peut generer **des Go de logs** et remplir le disque du serveur.
+  </Tab>
+  <Tab title="Logs structures JSON">
+    En production, les logs doivent etre en **JSON structure** pour etre exploitables par des outils d'analyse (ELK, Datadog, Grafana Loki).
+
+    ```javascript
+    // Avec Winston (Node.js)
+    const winston = require("winston");
+
+    const logger = winston.createLogger({
+      level: "info",
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()          // Format JSON structure
+      ),
+      transports: [
+        new winston.transports.Console()  // stdout uniquement
+      ],
+    });
+
+    // Log structure
+    logger.info("Requete traitee", {
+      method: "GET",
+      path: "/api/tasks",
+      statusCode: 200,
+      duration: 45,
+    });
+    ```
+
+    ```json
+    // Resultat : log JSON exploitable
+    {
+      "level": "info",
+      "message": "Requete traitee",
+      "method": "GET",
+      "path": "/api/tasks",
+      "statusCode": 200,
+      "duration": 45,
+      "timestamp": "2025-01-15T10:30:00.000Z"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  **Regle d'or des logs en production** : ecrire sur `stdout`/`stderr` uniquement. Ne jamais ecrire dans des fichiers a l'interieur du conteneur. Docker capture automatiquement les flux de sortie standard et gere la rotation.
+</Note>
+
+## Nginx Reverse Proxy
+
+### Qu'est-ce qu'un reverse proxy ?
+
+Un reverse proxy est un serveur intermediaire qui recoit les requetes des clients et les redistribue vers les services internes. Les services ne sont **jamais** exposes directement sur Internet.
+
+```
+                    Internet
+                       │
+                       ▼
+              ┌─────────────────┐
+              │  Nginx :80/:443 │   Reverse Proxy
+              │  (point d'entree│   unique
+              │   unique)       │
+              └──────┬──────────┘
+                     │
+          ┌──────────┼──────────────┐
+          ▼          ▼              ▼
+    ┌──────────┐ ┌──────────┐ ┌──────────┐
+    │ Frontend │ │  Tasks   │ │  Stats   │
+    │  :80     │ │  API     │ │  API     │
+    │          │ │  :3001   │ │  :3002   │
+    └──────────┘ └──────────┘ └──────────┘
+```
+
+<CardGroup cols={3}>
+  <Card title="SSL/TLS" icon="lock">
+    Gestion centralisee des certificats HTTPS. Les services internes communiquent en HTTP simple.
+  </Card>
+  <Card title="Performance" icon="bolt">
+    Compression gzip, cache des assets statiques, bufferisation des requetes.
+  </Card>
+  <Card title="Load balancing" icon="scale-balanced">
+    Repartition de la charge entre plusieurs instances d'un meme service.
+  </Card>
+  <Card title="Securite" icon="shield">
+    Rate limiting, filtrage des en-tetes, masquage de la stack technique.
+  </Card>
+  <Card title="Routing" icon="route">
+    Redirection vers le bon service selon l'URL (`/api/tasks`, `/api/stats`).
+  </Card>
+  <Card title="Logs centralises" icon="file-lines">
+    Un seul point de collecte des logs d'acces HTTP.
+  </Card>
+</CardGroup>
+
+### Configuration Nginx
+
+La configuration Nginx suit une structure modulaire : un fichier principal et des fichiers de configuration par application.
+
+```
+nginx/
+├── nginx.conf              # Configuration globale
+└── conf.d/
+    └── app.conf            # Configuration de l'application
+```
+
+<Tabs>
+  <Tab title="nginx.conf (principal)">
+    ```nginx
+    # nginx/nginx.conf
+    worker_processes auto;          # 1 worker par coeur CPU
+
+    events {
+        worker_connections 1024;    # Connexions simultanees par worker
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        # Compression gzip
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1000;
+        gzip_types text/plain text/css application/json
+                   application/javascript text/xml;
+
+        # Format de log
+        log_format main '$remote_addr - $remote_user [$time_local] '
+                        '"$request" $status $body_bytes_sent '
+                        '"$http_referer" "$http_user_agent"';
+
+        access_log /var/log/nginx/access.log main;
+        error_log /var/log/nginx/error.log warn;
+
+        # Inclure les configurations d'applications
+        include /etc/nginx/conf.d/*.conf;
+    }
+    ```
+  </Tab>
+  <Tab title="conf.d/app.conf (application)">
+    ```nginx
+    # nginx/conf.d/app.conf
+    server {
+        listen 80;
+        server_name monapp.example.com;
+
+        # Frontend (SPA React/Vue)
+        location / {
+            proxy_pass http://frontend:80;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # API Tasks
+        location /api/tasks {
+            proxy_pass http://tasks-service:3001;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # API Stats
+        location /api/stats {
+            proxy_pass http://stats-service:3002;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Cache des assets statiques
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+            proxy_pass http://frontend:80;
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<AccordionGroup>
+  <Accordion title="Comprendre les proxy_set_header">
+    Les en-tetes `proxy_set_header` transmettent des informations du client original au service interne.
+
+    | En-tete | Valeur | Utilite |
+    |---|---|---|
+    | `Host` | `$host` | Nom de domaine original de la requete |
+    | `X-Real-IP` | `$remote_addr` | Adresse IP reelle du client |
+    | `X-Forwarded-For` | `$proxy_add_x_forwarded_for` | Chaine d'IPs si plusieurs proxies |
+    | `X-Forwarded-Proto` | `$scheme` | Protocole original (http ou https) |
+
+    Sans ces en-tetes, votre API verrait `172.18.0.5` (IP interne du conteneur Nginx) au lieu de l'IP reelle du visiteur.
+  </Accordion>
+  <Accordion title="Cache des assets statiques">
+    Les fichiers statiques (JS, CSS, images, fonts) changent rarement. Nginx peut les servir depuis son cache et ajouter des en-tetes de cache pour le navigateur.
+
+    ```nginx
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+        proxy_pass http://frontend:80;
+        expires 30d;                              # Cache navigateur de 30 jours
+        add_header Cache-Control "public, immutable";
+    }
+    ```
+
+    Le mot-cle `immutable` indique au navigateur de ne **jamais** reverifier le fichier tant que le cache n'a pas expire. Cela elimine les requetes conditionnelles (304 Not Modified).
+  </Accordion>
+</AccordionGroup>
+
+### HTTPS avec Let's Encrypt
+
+En production, HTTPS est **obligatoire**. Let's Encrypt fournit des certificats SSL gratuits et renouveles automatiquement.
+
+<Tabs>
+  <Tab title="Configuration manuelle (Certbot)">
+    ```yaml
+    # docker-compose.prod.yml (extrait)
+    services:
+      nginx:
+        image: nginx:1.28-alpine
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+          - ./nginx/conf.d:/etc/nginx/conf.d:ro
+          - certbot_data:/var/www/certbot:ro
+          - certbot_certs:/etc/letsencrypt:ro
+
+      certbot:
+        image: certbot/certbot
+        volumes:
+          - certbot_data:/var/www/certbot
+          - certbot_certs:/etc/letsencrypt
+        # Renouvellement automatique toutes les 12h
+        entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h; done'"
+
+    volumes:
+      certbot_data:
+      certbot_certs:
+    ```
+
+    ```nginx
+    # nginx/conf.d/app.conf -- avec HTTPS
+    server {
+        listen 80;
+        server_name monapp.example.com;
+
+        # ACME challenge pour Let's Encrypt
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+
+        # Rediriger tout le HTTP vers HTTPS
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl;
+        server_name monapp.example.com;
+
+        ssl_certificate /etc/letsencrypt/live/monapp.example.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/monapp.example.com/privkey.pem;
+
+        location / {
+            proxy_pass http://frontend:80;
+            # ... proxy_set_header ...
+        }
+    }
+    ```
+
+    ```bash
+    # Obtenir le certificat initial
+    docker compose run --rm certbot certonly \
+      --webroot \
+      --webroot-path /var/www/certbot \
+      -d monapp.example.com
+    ```
+  </Tab>
+  <Tab title="Automatique (nginx-proxy + acme-companion)">
+    La solution **nginx-proxy** + **acme-companion** automatise entierement la gestion des certificats. Chaque nouveau conteneur avec les bonnes variables d'environnement obtient automatiquement un certificat HTTPS.
+
+    ```yaml
+    # docker-compose.prod.yml
+    services:
+      nginx-proxy:
+        image: nginxproxy/nginx-proxy
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - /var/run/docker.sock:/tmp/docker.sock:ro
+          - certs:/etc/nginx/certs
+          - html:/usr/share/nginx/html
+
+      acme-companion:
+        image: nginxproxy/acme-companion
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+          - certs:/etc/nginx/certs
+          - html:/usr/share/nginx/html
+          - acme:/etc/acme.sh
+        environment:
+          - DEFAULT_EMAIL=admin@example.com
+
+      api:
+        image: mon-app:latest
+        environment:
+          - VIRTUAL_HOST=api.monapp.com
+          - LETSENCRYPT_HOST=api.monapp.com
+
+    volumes:
+      certs:
+      html:
+      acme:
+    ```
+
+    Il suffit d'ajouter `VIRTUAL_HOST` et `LETSENCRYPT_HOST` sur chaque service. Le certificat est obtenu et renouvele automatiquement.
+  </Tab>
+</Tabs>
+
+### Rate limiting
+
+Le rate limiting protege votre application contre les abus : attaques DDoS, scraping, boucles infinies cote client.
+
+```nginx
+# Dans le bloc http {} de nginx.conf
+http {
+    # Definir une zone de limitation basee sur l'IP du client
+    # 10m = 10 Mo de memoire partagee (~160 000 IPs)
+    # rate = 10 requetes par seconde par IP
+    limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+
+    # ...
+}
+```
+
+```nginx
+# Dans le bloc server {} de conf.d/app.conf
+location /api/ {
+    # Appliquer le rate limiting
+    # burst=20 : file d'attente de 20 requetes supplementaires
+    # nodelay : traiter les requetes du burst immediatement
+    limit_req zone=api_limit burst=20 nodelay;
+
+    proxy_pass http://api:3001;
+    # ... proxy_set_header ...
+}
+```
+
+| Parametre | Description | Exemple |
+|---|---|---|
+| `zone` | Nom et taille de la zone memoire | `api_limit:10m` |
+| `rate` | Nombre de requetes autorisees par seconde | `10r/s` |
+| `burst` | Nombre de requetes excedentaires tolerees | `20` |
+| `nodelay` | Traiter le burst immediatement (sans mise en file) | - |
+
+<Note>
+  Avec `rate=10r/s` et `burst=20`, un client peut envoyer jusqu'a **30 requetes d'un coup** (10 normales + 20 burst). Au-dela, il recoit une erreur **429 Too Many Requests**. Adaptez ces valeurs selon votre trafic reel.
+</Note>
+
+### Integration dans docker-compose.prod.yml
+
+Avec Nginx en reverse proxy, les ports internes des services ne sont **plus exposes** publiquement. Seuls les ports 80 et 443 de Nginx sont accessibles depuis Internet.
+
+```yaml
+# docker-compose.prod.yml (complet)
+services:
+  nginx:
+    image: nginx:1.28-alpine
+    ports:
+      - "80:80"                        # Seul point d'entree HTTP
+      - "443:443"                      # Seul point d'entree HTTPS
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      tasks-service:
+        condition: service_healthy
+      stats-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    # PAS de "ports:" -- accessible uniquement via Nginx
+    restart: unless-stopped
+
+  tasks-service:
+    build:
+      context: ./tasks-service
+      target: production
+    # PAS de "ports:" -- accessible uniquement via Nginx
+    env_file:
+      - .env.production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  stats-service:
+    build:
+      context: ./stats-service
+      target: production
+    # PAS de "ports:" -- accessible uniquement via Nginx
+    env_file:
+      - .env.production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  db:
+    image: postgres:16-alpine
+    # PAS de "ports:" -- accessible uniquement depuis le reseau interne
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    env_file:
+      - .env.production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+volumes:
+  pg_data:
+```
+
+<Warning>
+  Remarquez l'absence de `ports:` sur les services frontend, tasks-service, stats-service et db. Ils ne sont accessibles que via le reseau interne Docker. Seul Nginx expose les ports 80 et 443. Les ports 3001, 3002 et 5432 ne sont **jamais** accessibles depuis Internet.
+</Warning>
+
+## Architecture finale
+
+Voici l'architecture complete d'une application en production avec Docker Compose.
+
+```
+                         Internet
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │  Nginx :80/:443 │
+                   │  Reverse Proxy  │
+                   │  SSL/TLS        │
+                   │  Rate Limiting  │
+                   │  Gzip / Cache   │
+                   └────────┬────────┘
+                            │
+           ┌────────────────┼────────────────┐
+           │                │                │
+           ▼                ▼                ▼
+    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+    │  Frontend   │  │  Tasks API  │  │  Stats API  │
+    │  :80        │  │  :3001      │  │  :3002      │
+    │  (Nginx)    │  │  (Node.js)  │  │  (Node.js)  │
+    └─────────────┘  └──────┬──────┘  └──────┬──────┘
+                            │                │
+                            └────────┬───────┘
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │  PostgreSQL     │
+                            │  :5432          │
+                            │  (volume pg_data│
+                            │   persistant)   │
+                            └─────────────────┘
+```
+
+### Checklist de production
+
+Avant de deployer, verifiez que chaque point est couvert.
+
+| Categorie | Element | Status |
+|---|---|---|
+| **Secrets** | `.env` dans `.gitignore` | Obligatoire |
+| **Secrets** | `.env.example` versionne | Obligatoire |
+| **Secrets** | Aucun secret dans l'historique Git | Obligatoire |
+| **Docker** | `restart: unless-stopped` sur chaque service | Obligatoire |
+| **Docker** | Health checks configures | Obligatoire |
+| **Docker** | Resource limits (CPU, memoire) | Obligatoire |
+| **Docker** | Logs avec rotation (`max-size`, `max-file`) | Obligatoire |
+| **Reseau** | Reverse proxy (Nginx) en point d'entree | Obligatoire |
+| **Reseau** | Ports internes non exposes publiquement | Obligatoire |
+| **Reseau** | HTTPS avec certificat valide | Obligatoire |
+| **Reseau** | Rate limiting configure | Recommande |
+| **Build** | Images avec `target: production` | Obligatoire |
+| **Build** | `NODE_ENV=production` | Obligatoire |
+| **Build** | Pas de bind mounts (images immuables) | Obligatoire |
+
+## Resume
+
+<AccordionGroup>
+  <Accordion title="Dev vs Prod">
+    En dev, on optimise pour l'iteration (hot-reload, logs verbeux, ports exposes). En prod, on optimise pour la fiabilite (images immuables, logs JSON, reverse proxy, resource limits).
+  </Accordion>
+  <Accordion title="Configuration multi-environnements">
+    Separer le code (immuable) de la configuration (variable) via le principe 12-Factor. Utiliser des fichiers `.env` non versionnes et des override files Docker Compose (`docker-compose.prod.yml`).
+  </Accordion>
+  <Accordion title="Gestion des secrets">
+    Ne jamais commiter de secrets. Utiliser `.gitignore`, `.env.example`, des outils de detection (gitleaks), et des secrets managers en production. Si un secret est commite : revoquer, supprimer de l'historique, notifier.
+  </Accordion>
+  <Accordion title="Docker Compose en production">
+    Adapte pour les PME et les applications simples. Configurer `restart: unless-stopped`, resource limits, health checks, et rotation des logs. Commencer simple, complexifier si necessaire.
+  </Accordion>
+  <Accordion title="Nginx reverse proxy">
+    Point d'entree unique vers les services internes. Gere SSL/TLS, gzip, cache, load balancing, rate limiting, et routing par URL. Les ports internes ne sont jamais exposes publiquement.
+  </Accordion>
+</AccordionGroup>

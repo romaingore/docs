@@ -1,0 +1,519 @@
+---
+title: "Fondamentaux Docker"
+description: "Images, conteneurs, Dockerfile et système de layers"
+---
+
+Docker permet d'empaqueter une application et toutes ses dépendances dans un **conteneur** : un processus isolé, portable et reproductible.
+
+## Qu'est-ce qu'un conteneur ?
+
+Un conteneur est un **processus isolé** qui tourne avec ses propres dépendances, packagees dans une image. Contrairement à une machine virtuelle, il ne virtualise pas tout un système d'exploitation : il partage le **kernel de l'hôte**.
+
+| | Conteneur | Machine Virtuelle |
+|---|---|---|
+| **Démarrage** | Quelques secondes | Quelques minutes |
+| **Taille** | Mo (image légère) | Go (OS complet) |
+| **Isolation** | Processus (kernel partagé) | Matérielle (hyperviseur) |
+| **Performance** | Quasi-native | Overhead de virtualisation |
+| **Densité** | Des centaines par hôte | Des dizaines par hôte |
+
+<Note>
+  Un conteneur n'est **pas** une mini-VM. C'est un processus Linux normal auquel on a appliqué des mécanismes d'isolation du kernel.
+</Note>
+
+## Isolation : comment ça marche ?
+
+Docker repose sur deux mécanismes fondamentaux du kernel Linux :
+
+<CardGroup cols={2}>
+  <Card title="Namespaces" icon="eye-slash">
+    Donnent au conteneur l'**illusion d'un système autonome**. Chaque conteneur a sa propre vue du système : PID, réseau, système de fichiers, utilisateurs, hostname. Le processus dans le conteneur pense être seul sur la machine.
+  </Card>
+  <Card title="Cgroups" icon="gauge">
+    Imposent des **limites de ressources** : CPU, mémoire, I/O disque, réseau. Empêchent un conteneur de monopoliser les ressources de l'hôte. Exemple : limiter un conteneur à 512 Mo de RAM et 0.5 CPU.
+  </Card>
+</CardGroup>
+
+## Image vs Conteneur
+
+C'est la distinction la plus importante à comprendre en Docker.
+
+| | Image | Conteneur |
+|---|---|---|
+| **Analogie OOP** | Classe | Objet (instance) |
+| **Nature** | Modèle immuable (read-only) | Instance en exécution |
+| **Système de fichiers** | Couches en lecture seule | Couche R/W éphémère ajoutée au-dessus |
+| **Durée de vie** | Persistante (stockée dans un registry) | Éphémère (peut être créé/détruit à volonté) |
+| **Création** | `docker build` | `docker run` |
+
+<Tip>
+  Depuis **1 seule image**, on peut créer **100 conteneurs** identiques. Chacun possède sa propre couche d'écriture indépendante, mais ils partagent tous les mêmes layers en lecture seule de l'image.
+</Tip>
+
+```
+Image nginx:1.28
+  │
+  ├── docker run → Conteneur 1 (port 8080)
+  ├── docker run → Conteneur 2 (port 8081)
+  └── docker run → Conteneur 3 (port 8082)
+        │
+        Chaque conteneur a sa propre couche R/W
+        mais partage les layers R/O de l'image
+```
+
+## Docker Engine
+
+Le Docker Engine est composé de deux parties distinctes :
+
+<CardGroup cols={2}>
+  <Card title="Docker CLI" icon="terminal">
+    L'interface en ligne de commande. C'est ce que vous tapez dans votre terminal : `docker run`, `docker build`, `docker ps`. Ce n'est **qu'une interface** qui envoie des requêtes au daemon.
+  </Card>
+  <Card title="Docker Daemon (dockerd)" icon="server">
+    Le **moteur interne** qui fait le vrai travail : télécharger et construire les images, créer et exécuter les conteneurs, gérer le réseau et les volumes. Il tourne en arrière-plan en tant que service système.
+  </Card>
+</CardGroup>
+
+```
+  Docker CLI ──── API REST ────► Docker Daemon (dockerd)
+  (docker run)                      │
+                                    ├── Télécharge les images
+                                    ├── Construit les images
+                                    ├── Crée les conteneurs
+                                    ├── Gère le réseau
+                                    └── Gère les volumes
+```
+
+## Commandes essentielles
+
+<AccordionGroup>
+  <Accordion title="Lancer et gérer des conteneurs">
+    ```bash
+    # Lancer un conteneur en arrière-plan avec mapping de port
+    docker run -d -p 8080:80 nginx
+    #          │  │         │
+    #          │  │         └── image à utiliser
+    #          │  └── port hôte:port conteneur
+    #          └── mode détaché (arrière-plan)
+
+    # Lancer un conteneur interactif (utile pour debug)
+    docker run -it ubuntu bash
+    #          │
+    #          └── -i (interactif) + -t (pseudo-terminal)
+
+    # Lancer avec un nom personnalisé
+    docker run -d --name mon-serveur -p 8080:80 nginx
+
+    # Lancer avec des variables d'environnement
+    docker run -d -e POSTGRES_PASSWORD=secret postgres:16
+    ```
+  </Accordion>
+
+  <Accordion title="Inspecter les conteneurs">
+    ```bash
+    # Lister les conteneurs en cours d'exécution
+    docker ps
+
+    # Lister TOUS les conteneurs (y compris les arrêtés)
+    docker ps -a
+
+    # Voir les logs d'un conteneur
+    docker logs mon-serveur
+    docker logs -f mon-serveur        # suivre en temps réel (comme tail -f)
+
+    # Exécuter une commande dans un conteneur en cours
+    docker exec -it mon-serveur bash  # ouvrir un shell
+    docker exec mon-serveur ls /etc   # exécuter une commande ponctuelle
+
+    # Inspecter les détails complets (JSON)
+    docker inspect mon-serveur
+    ```
+  </Accordion>
+
+  <Accordion title="Arrêter et supprimer">
+    ```bash
+    # Arrêter un conteneur proprement (envoie SIGTERM, puis SIGKILL après 10s)
+    docker stop mon-serveur
+
+    # Tuer un conteneur immédiatement (envoie SIGKILL)
+    docker kill mon-serveur
+
+    # Redémarrer un conteneur arrêté
+    docker start mon-serveur
+
+    # Supprimer un conteneur arrêté
+    docker rm mon-serveur
+
+    # Forcer la suppression d'un conteneur en cours d'exécution
+    docker rm -f mon-serveur
+    ```
+
+    <Warning>
+      `docker stop` envoie **SIGTERM** (arrêt propre : le processus peut fermer ses connexions, sauvegarder son état). `docker kill` envoie **SIGKILL** (arrêt brutal : le processus est tué immédiatement). Privilégiez toujours `stop` en production.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Gérer les images">
+    ```bash
+    # Lister les images locales
+    docker images
+
+    # Télécharger une image depuis Docker Hub
+    docker pull nginx:1.28
+
+    # Construire une image depuis un Dockerfile
+    docker build -t mon-app:1.0 .
+
+    # Taguer une image
+    docker tag mon-app:1.0 mon-registry/mon-app:1.0
+
+    # Pousser une image vers un registry
+    docker push mon-registry/mon-app:1.0
+    ```
+  </Accordion>
+
+  <Accordion title="Nettoyage">
+    ```bash
+    # Voir l'espace disque utilisé par Docker
+    docker system df
+
+    # Supprimer les conteneurs arrêtés
+    docker container prune
+
+    # Supprimer les images non utilisées (sans tag)
+    docker image prune
+
+    # Supprimer TOUT ce qui n'est pas utilisé (images, conteneurs, réseaux, cache)
+    docker system prune -a
+    ```
+
+    <Tip>
+      Lancez `docker system df` régulièrement. Les images et le cache de build peuvent rapidement occuper des dizaines de Go sur votre disque.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+## Comprendre le Dockerfile
+
+Un **Dockerfile** est une recette qui décrit, étape par étape, comment construire une image Docker.
+
+### Les instructions principales
+
+| Instruction | Rôle | Exemple |
+|---|---|---|
+| `FROM` | Image de base | `FROM node:20-alpine` |
+| `WORKDIR` | Définir le répertoire de travail | `WORKDIR /app` |
+| `COPY` | Copier des fichiers dans l'image | `COPY package.json .` |
+| `RUN` | Exécuter une commande pendant le build | `RUN npm install` |
+| `CMD` | Commande par défaut au démarrage | `CMD ["node", "server.js"]` |
+| `ENTRYPOINT` | Point d'entrée fixe du conteneur | `ENTRYPOINT ["python"]` |
+| `EXPOSE` | Documenter le port exposé | `EXPOSE 3000` |
+| `ENV` | Variable d'environnement | `ENV NODE_ENV=production` |
+
+<Note>
+  `EXPOSE` ne publie pas réellement le port. C'est une **documentation** pour indiquer sur quel port l'application écoute. Il faut toujours utiliser `-p` lors du `docker run` pour mapper le port.
+</Note>
+
+### COPY vs ADD
+
+| | `COPY` | `ADD` |
+|---|---|---|
+| **Copie de fichiers** | Oui | Oui |
+| **Extraction d'archives** | Non | Oui (décompresse automatiquement .tar.gz) |
+| **URL distantes** | Non | Oui (télécharge depuis une URL) |
+| **Recommandation** | A privilégier | A éviter (comportement implicite) |
+
+<Tip>
+  Utilisez toujours **COPY** sauf si vous avez explicitement besoin de décompresser une archive. Le comportement explicite de COPY est plus prévisible.
+</Tip>
+
+### CMD vs ENTRYPOINT
+
+| | `CMD` | `ENTRYPOINT` |
+|---|---|---|
+| **Rôle** | Commande par défaut | Point d'entrée fixe |
+| **Surchargeable** | Oui, facilement via `docker run` | Non (sauf avec `--entrypoint`) |
+| **Cas d'usage** | Application standard | Outil en ligne de commande |
+
+```bash
+# Avec CMD ["node", "server.js"]
+docker run mon-app                  # exécute: node server.js
+docker run mon-app node test.js     # exécute: node test.js (CMD remplacé)
+
+# Avec ENTRYPOINT ["python"]
+docker run mon-app                  # exécute: python
+docker run mon-app script.py        # exécute: python script.py (argument ajouté)
+```
+
+### Exemples complets
+
+<Tabs>
+  <Tab title="Node.js">
+    ```dockerfile
+    # Image de base légère
+    FROM node:20-alpine
+
+    # Répertoire de travail dans le conteneur
+    WORKDIR /app
+
+    # Copier UNIQUEMENT les fichiers de dépendances en premier (optimisation cache)
+    COPY package.json package-lock.json ./
+
+    # Installer les dépendances de production uniquement
+    RUN npm ci --production
+
+    # Copier le reste du code source
+    COPY . .
+
+    # Documenter le port
+    EXPOSE 3000
+
+    # Commande de démarrage
+    CMD ["node", "server.js"]
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```dockerfile
+    # Image de base légère
+    FROM python:3.12-slim
+
+    # Empêcher Python de générer des fichiers .pyc
+    ENV PYTHONDONTWRITEBYTECODE=1
+    # Forcer la sortie stdout/stderr sans buffer
+    ENV PYTHONUNBUFFERED=1
+
+    WORKDIR /app
+
+    # Copier et installer les dépendances en premier (optimisation cache)
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+
+    # Copier le code source
+    COPY . .
+
+    EXPOSE 8000
+
+    CMD ["python", "app.py"]
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```dockerfile
+    # Étape de build
+    FROM golang:1.22-alpine AS builder
+
+    WORKDIR /app
+    COPY go.mod go.sum ./
+    RUN go mod download
+
+    COPY . .
+    RUN CGO_ENABLED=0 go build -o /app/server .
+
+    # Étape finale : image minimale
+    FROM scratch
+    COPY --from=builder /app/server /server
+    EXPOSE 8080
+    CMD ["/server"]
+    ```
+  </Tab>
+</Tabs>
+
+### Choisir son image de base
+
+| Tag | Taille | Cas d'usage |
+|---|---|---|
+| `node:20` | ~350 Mo | Développement, debug |
+| `node:20-slim` | ~80 Mo | Production (bon compromis) |
+| `node:20-alpine` | ~50 Mo | Production (image minimale) |
+| `python:3.12` | ~400 Mo | Développement |
+| `python:3.12-slim` | ~50 Mo | Production |
+| `python:3.12-alpine` | ~20 Mo | Production (attention aux incompatibilités C) |
+
+<Warning>
+  Les images **Alpine** utilisent `musl` au lieu de `glibc`. Certaines bibliothèques C (comme `numpy`, `pandas`, `bcrypt`) peuvent ne pas fonctionner ou nécessiter une compilation supplémentaire. En Python, privilégiez **slim** pour éviter les surprises.
+</Warning>
+
+## Le système de layers
+
+Chaque instruction dans un Dockerfile crée une **couche** (layer). Comprendre ce mécanisme est essentiel pour construire des images optimisées.
+
+```
+Image finale
+┌──────────────────────────────┐
+│  CMD ["node", "server.js"]   │  Layer 5 (metadata, 0 B)
+├──────────────────────────────┤
+│  COPY . .                    │  Layer 4 (code source)
+├──────────────────────────────┤
+│  RUN npm ci --production     │  Layer 3 (node_modules)
+├──────────────────────────────┤
+│  COPY package.json .         │  Layer 2 (fichier deps)
+├──────────────────────────────┤
+│  FROM node:20-alpine         │  Layer 1 (image de base)
+└──────────────────────────────┘
+```
+
+### Le cache Docker
+
+Lors d'un `docker build`, Docker vérifie pour chaque instruction si le layer a changé :
+- **Layer inchangé** : réutilisé depuis le cache (instantané)
+- **Layer modifié** : reconstruit ce layer **et tous les suivants**
+
+C'est pourquoi l'**ordre des instructions est crucial**.
+
+<Tabs>
+  <Tab title="Mauvais ordre">
+    ```dockerfile
+    FROM node:20-alpine
+    WORKDIR /app
+
+    # Copie TOUT le code source d'abord
+    COPY . .
+
+    # Installe les dépendances
+    RUN npm ci --production
+
+    CMD ["node", "server.js"]
+    ```
+
+    Le problème : à chaque modification du code source (même un simple commentaire), le `COPY . .` invalide le cache et **npm ci est relancé** à chaque build. Temps de build : **45 secondes** à chaque changement.
+  </Tab>
+  <Tab title="Bon ordre">
+    ```dockerfile
+    FROM node:20-alpine
+    WORKDIR /app
+
+    # 1. Copier UNIQUEMENT les fichiers de dépendances
+    COPY package.json package-lock.json ./
+
+    # 2. Installer les dépendances (cache tant que package.json ne change pas)
+    RUN npm ci --production
+
+    # 3. Copier le reste du code source
+    COPY . .
+
+    CMD ["node", "server.js"]
+    ```
+
+    L'avantage : quand seul le code change, les layers 1-3 sont en cache. Seul le `COPY . .` est relancé. Temps de build : **3 secondes** au lieu de 45.
+  </Tab>
+</Tabs>
+
+### Optimiser les layers RUN
+
+Chaque instruction `RUN` crée un layer. Les fichiers supprimés dans un layer ultérieur occupent toujours de l'espace dans les layers précédents.
+
+<Tabs>
+  <Tab title="Mauvaise pratique">
+    ```dockerfile
+    # 3 layers distincts = image plus lourde
+    RUN apt-get update
+    RUN apt-get install -y curl wget git
+    RUN rm -rf /var/lib/apt/lists/*
+    ```
+
+    Le `rm` crée un nouveau layer qui "masque" les fichiers, mais le layer du `apt-get install` contient toujours les fichiers du cache apt. Résultat : **~600 Mo**.
+  </Tab>
+  <Tab title="Bonne pratique">
+    ```dockerfile
+    # 1 seul layer = image plus légère
+    RUN apt-get update && \
+        apt-get install -y --no-install-recommends curl wget git && \
+        rm -rf /var/lib/apt/lists/*
+    ```
+
+    Tout se passe dans un seul layer. Les fichiers temporaires sont supprimés avant que le layer ne soit "figé". Résultat : **~300 Mo**.
+  </Tab>
+</Tabs>
+
+<Warning>
+  La différence peut être considérable. En combinant les commandes `RUN`, on passe de **600 Mo à 300 Mo** dans cet exemple. Sur un cluster de production avec des centaines de conteneurs, cela représente une économie significative en stockage et en temps de démarrage.
+</Warning>
+
+## .dockerignore
+
+Le fichier `.dockerignore` fonctionne comme `.gitignore` : il exclut des fichiers du contexte de build envoyé au daemon Docker.
+
+```plaintext
+# Dépendances (réinstallées dans le conteneur)
+node_modules
+__pycache__
+
+# Artefacts de build
+dist
+build
+*.egg-info
+
+# Fichiers de versioning
+.git
+.gitignore
+
+# Configuration locale et secrets
+.env
+.env.local
+*.pem
+
+# Documentation et fichiers inutiles
+README.md
+LICENSE
+docs/
+
+# Fichiers Docker (pas besoin dans l'image)
+Dockerfile
+docker-compose.yml
+.dockerignore
+```
+
+**Pourquoi c'est important :**
+
+| Sans .dockerignore | Avec .dockerignore |
+|---|---|
+| `node_modules` envoyé au daemon (des centaines de Mo) | Exclut les fichiers inutiles |
+| Le dossier `.git` alourdit le contexte | Build plus rapide |
+| Les fichiers `.env` se retrouvent dans l'image | Image plus légère et plus sécurisée |
+| Build lent | Seuls les fichiers nécessaires sont envoyés |
+
+<Warning>
+  Sans `.dockerignore`, vos fichiers `.env` contenant des secrets (clés API, mots de passe) se retrouvent **dans l'image Docker**. Toute personne ayant accès à l'image peut les extraire.
+</Warning>
+
+## Règle d'or
+
+<Note>
+  **Ne jamais modifier un conteneur en production.** Si vous devez changer quelque chose (code, configuration, dépendance), modifiez le **Dockerfile** ou le code source, reconstruisez l'image, et relancez un nouveau conteneur. Le conteneur est éphémère et jetable par nature.
+</Note>
+
+```
+Modification nécessaire ?
+         │
+         ▼
+  Modifier le Dockerfile
+  ou le code source
+         │
+         ▼
+  docker build -t mon-app:2.0 .
+         │
+         ▼
+  docker stop ancien-conteneur
+         │
+         ▼
+  docker run mon-app:2.0
+         │
+         ▼
+  docker rm ancien-conteneur
+```
+
+Cette approche garantit que chaque environnement (dev, staging, production) exécute exactement la **même image**, construite de manière reproductible à partir du même Dockerfile.
+
+## Résumé
+
+| Concept | À retenir |
+|---|---|
+| **Conteneur** | Processus isolé qui partage le kernel de l'hôte |
+| **Image** | Modèle immuable en couches, construit par un Dockerfile |
+| **Namespaces** | Isolation des processus, réseau, fichiers |
+| **Cgroups** | Limites de ressources (CPU, RAM) |
+| **Docker CLI** | Interface utilisateur, envoie des commandes au daemon |
+| **Docker Daemon** | Moteur qui exécute les opérations |
+| **Layers** | Chaque instruction Dockerfile = 1 couche, mise en cache |
+| **Cache** | Optimiser l'ordre des instructions pour réutiliser le cache |
+| **.dockerignore** | Exclure les fichiers inutiles du build |
+| **Règle d'or** | Jamais modifier un conteneur, toujours rebuild l'image |

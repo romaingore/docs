@@ -1,0 +1,392 @@
+---
+title: "Volumes & Réseaux Docker"
+description: "Persistance des données et communication inter-conteneurs"
+---
+
+Un conteneur Docker est **éphémère** par nature : il peut être créé, détruit et recréé à tout moment. Mais les données qu'il manipule (bases de données, fichiers uploadés, logs) ne doivent **jamais** l'être. Les **volumes** résolvent le problème de la persistance, et les **réseaux** celui de la communication entre conteneurs.
+
+## Les conteneurs sont éphémères
+
+Par défaut, toutes les données écrites à l'intérieur d'un conteneur sont stockées dans sa **couche en écriture** (read-write layer). Cette couche est liée au cycle de vie du conteneur.
+
+```bash
+# Créer un conteneur, écrire un fichier, puis le supprimer
+docker run --name demo alpine sh -c "echo 'données importantes' > /data.txt"
+docker rm demo
+
+# Recréer le conteneur : le fichier a disparu
+docker run --name demo alpine cat /data.txt
+# cat: can't open '/data.txt': No such file or directory
+```
+
+<Warning>
+  Sans volume, toute donnée écrite dans un conteneur est **définitivement perdue** lors d'un `docker rm`. Cela inclut les données de base de données, les fichiers uploadés par les utilisateurs, les logs applicatifs, etc.
+</Warning>
+
+## Les 3 types de stockage Docker
+
+| Type | Emplacement | Cycle de vie | Cas d'usage |
+|---|---|---|---|
+| **Layer RW du conteneur** | Dans l'image, couche éphémère | Perdu a chaque `docker rm` | Fichiers temporaires uniquement |
+| **Bind mount** | Un dossier de l'hote (`-v /chemin/hote:/chemin/conteneur`) | Lié au système de fichiers hote | Développement, hot-reload |
+| **Volume Docker** | Géré par Docker (`docker volume create`) | Survit a la suppression du conteneur | Production, BDD, persistance |
+
+## Bind mounts
+
+Un **bind mount** monte un répertoire de la machine hote directement dans le conteneur. Toute modification est immédiatement visible des deux cotés.
+
+```bash
+# Monter le dossier courant dans /app du conteneur
+docker run -v $(pwd):/app node:24 node /app/index.js
+```
+
+<Tip>
+  Les bind mounts sont parfaits pour le **développement local** : modifiez votre code dans votre IDE, et le conteneur voit les changements instantanément (hot-reload).
+</Tip>
+
+### Avantages et limites
+
+| Avantage | Limite |
+|---|---|
+| Modifications visibles en temps réel | Dépend du système de fichiers de l'hote |
+| Édition directe via l'IDE | Problèmes de permissions possibles (Linux) |
+| Parfait pour le hot-reload | Performance réduite sur macOS/Windows |
+| Aucune configuration Docker nécessaire | Non portable entre machines |
+
+## Volumes Docker
+
+Les **volumes Docker** sont le mécanisme recommandé pour la persistance des données en production. Ils sont entièrement gérés par Docker.
+
+### Commandes de gestion
+
+```bash
+# Créer un volume
+docker volume create mes_donnees
+
+# Lister les volumes
+docker volume ls
+
+# Inspecter un volume (chemin, driver, options)
+docker volume inspect mes_donnees
+
+# Supprimer un volume
+docker volume rm mes_donnees
+
+# Supprimer tous les volumes non utilisés
+docker volume prune
+```
+
+### Utiliser un volume
+
+```bash
+# Monter le volume "mes_donnees" dans /data du conteneur
+docker run -v mes_donnees:/data alpine sh -c "echo 'persistant' > /data/fichier.txt"
+
+# Le volume survit à la suppression du conteneur
+docker rm <id>
+
+# Les données sont toujours là dans un nouveau conteneur
+docker run -v mes_donnees:/data alpine cat /data/fichier.txt
+# persistant
+```
+
+### Exemple complet : PostgreSQL
+
+Cet exemple démontre la différence fondamentale entre un conteneur avec et sans volume.
+
+<Tabs>
+  <Tab title="Sans volume (données perdues)">
+    ```bash
+    # 1. Lancer PostgreSQL SANS volume
+    docker run -d --name pg_no_vol \
+      -e POSTGRES_PASSWORD=secret \
+      postgres:16-alpine
+
+    # 2. Créer une table et insérer des données
+    docker exec -it pg_no_vol psql -U postgres -c "
+      CREATE TABLE utilisateurs (id SERIAL, nom TEXT);
+      INSERT INTO utilisateurs (nom) VALUES ('Alice'), ('Bob');
+    "
+
+    # 3. Vérifier que les données existent
+    docker exec -it pg_no_vol psql -U postgres -c "SELECT * FROM utilisateurs;"
+    #  id |  nom
+    # ----+-------
+    #   1 | Alice
+    #   2 | Bob
+
+    # 4. Supprimer et recréer le conteneur
+    docker stop pg_no_vol && docker rm pg_no_vol
+    docker run -d --name pg_no_vol \
+      -e POSTGRES_PASSWORD=secret \
+      postgres:16-alpine
+
+    # 5. Les données ont DISPARU
+    docker exec -it pg_no_vol psql -U postgres -c "SELECT * FROM utilisateurs;"
+    # ERROR: relation "utilisateurs" does not exist
+    ```
+  </Tab>
+  <Tab title="Avec volume (données persistantes)">
+    ```bash
+    # 1. Créer un volume dédié
+    docker volume create pg_data
+
+    # 2. Lancer PostgreSQL AVEC le volume
+    docker run -d --name pg_vol \
+      -e POSTGRES_PASSWORD=secret \
+      -v pg_data:/var/lib/postgresql/data \
+      postgres:16-alpine
+
+    # 3. Créer une table et insérer des données
+    docker exec -it pg_vol psql -U postgres -c "
+      CREATE TABLE utilisateurs (id SERIAL, nom TEXT);
+      INSERT INTO utilisateurs (nom) VALUES ('Alice'), ('Bob');
+    "
+
+    # 4. Supprimer et recréer le conteneur
+    docker stop pg_vol && docker rm pg_vol
+    docker run -d --name pg_vol \
+      -e POSTGRES_PASSWORD=secret \
+      -v pg_data:/var/lib/postgresql/data \
+      postgres:16-alpine
+
+    # 5. Les données sont TOUJOURS LÀ
+    docker exec -it pg_vol psql -U postgres -c "SELECT * FROM utilisateurs;"
+    #  id |  nom
+    # ----+-------
+    #   1 | Alice
+    #   2 | Bob
+    ```
+  </Tab>
+</Tabs>
+
+### Où sont stockés les volumes ?
+
+| Plateforme | Emplacement |
+|---|---|
+| **Linux** | `/var/lib/docker/volumes/` |
+| **macOS** | Dans la VM Docker Desktop (non accessible directement) |
+| **Windows** | Dans la VM WSL2 / Docker Desktop |
+
+<Note>
+  Sur macOS et Windows, Docker tourne dans une machine virtuelle. Les volumes ne sont pas directement accessibles depuis le système de fichiers hote. Utilisez `docker volume inspect` pour obtenir les métadonnées.
+</Note>
+
+## Quand utiliser quoi ?
+
+| Cas d'usage | Type de stockage | Pourquoi |
+|---|---|---|
+| **Base de données** | Volume | Persistance, isolation, performance |
+| **Développement local** | Bind mount | Hot-reload, édition via IDE |
+| **Fichiers uploadés** | Volume | Persistance indépendante du conteneur |
+| **Logs applicatifs** | Volume | Conservation et analyse ultérieure |
+| **Cache temporaire** | Aucun (layer RW) | Données jetables par nature |
+| **Secrets / config** | Volume ou bind mount | Selon l'environnement (dev vs prod) |
+
+---
+
+## Réseau Docker
+
+Les conteneurs ont besoin de communiquer entre eux (application vers base de données, API vers cache, etc.) et avec le monde extérieur. Docker fournit un système de réseau virtuel pour cela.
+
+### Rappel : le port mapping
+
+Le **port mapping** (`-p`) expose un port du conteneur sur la machine hote.
+
+```bash
+# Exposer le port 80 du conteneur sur le port 8080 de l'hôte
+docker run -d -p 8080:80 nginx
+```
+
+```
+Machine hôte                     Conteneur
+┌──────────────────┐            ┌──────────────────┐
+│                  │            │                  │
+│  localhost:8080 ──────────────── port 80 (nginx) │
+│                  │            │                  │
+└──────────────────┘            └──────────────────┘
+
+Format : -p <port_hôte>:<port_conteneur>
+```
+
+### Le problème : localhost entre conteneurs
+
+<Warning>
+  `localhost` dans un conteneur fait référence **au conteneur lui-même**, pas à la machine hote ni aux autres conteneurs. Utiliser `localhost:5432` depuis un conteneur applicatif pour joindre un conteneur PostgreSQL ne fonctionnera **jamais**.
+</Warning>
+
+```bash
+# Ceci NE FONCTIONNE PAS entre conteneurs
+docker run -d --name db postgres:16-alpine
+docker run --name app node:24 node -e "
+  // localhost:5432 pointe vers le conteneur 'app' lui-même, pas vers 'db'
+  fetch('http://localhost:5432')
+"
+```
+
+### Types de réseaux Docker
+
+| Type | Description | Isolation | Cas d'usage |
+|---|---|---|---|
+| **bridge** | Réseau virtuel isolé | Les conteneurs communiquent entre eux | Usage par défaut, applications multi-conteneurs |
+| **host** | Partage le réseau de la machine hote | Aucune isolation réseau | Performance maximale, débogage |
+| **none** | Aucune connectivité réseau | Isolation totale | Conteneurs sans besoin réseau, sécurité |
+
+```bash
+# Réseau bridge (par défaut)
+docker run -d --network bridge nginx
+
+# Réseau host (partage le réseau de l'hôte)
+docker run -d --network host nginx
+
+# Aucun réseau
+docker run -d --network none alpine
+```
+
+### Réseau bridge par défaut vs custom
+
+<Tabs>
+  <Tab title="Bridge par défaut">
+    ```bash
+    # Les conteneurs sur le bridge par défaut ne se résolvent PAS par nom
+    docker run -d --name db postgres:16-alpine
+    docker run --name app alpine ping -c 2 db
+    # ping: bad address 'db'
+    ```
+
+    Pas de DNS automatique. Il faut utiliser les adresses IP (fragile et non recommandé).
+  </Tab>
+  <Tab title="Bridge custom">
+    ```bash
+    # Créer un réseau custom
+    docker network create myapp
+
+    # Les conteneurs se résolvent automatiquement par nom
+    docker run -d --name db --network myapp postgres:16-alpine
+    docker run --network myapp alpine ping -c 2 db
+    # PING db (172.18.0.2): 56 data bytes
+    # 64 bytes from 172.18.0.2: seq=0 ttl=64 time=0.123 ms
+    ```
+
+    DNS automatique : chaque conteneur est accessible par son `--name`.
+  </Tab>
+</Tabs>
+
+<Tip>
+  Utilisez **toujours** un réseau custom pour vos applications multi-conteneurs. Le DNS automatique rend la configuration beaucoup plus simple et robuste que l'utilisation d'adresses IP.
+</Tip>
+
+### Créer et utiliser un réseau custom
+
+<Steps>
+  <Step title="Créer le réseau">
+    ```bash
+    docker network create myapp
+    ```
+  </Step>
+  <Step title="Lancer les conteneurs sur ce réseau">
+    ```bash
+    # Base de données
+    docker run -d --name database \
+      --network myapp \
+      -e POSTGRES_PASSWORD=secret \
+      postgres:16-alpine
+
+    # Application
+    docker run -d --name api \
+      --network myapp \
+      -e DATABASE_URL=postgres://postgres:secret@database:5432/postgres \
+      -p 3000:3000 \
+      mon-api
+    ```
+  </Step>
+  <Step title="Vérifier la connectivité">
+    ```bash
+    # Depuis le conteneur 'api', 'database' est résolu automatiquement
+    docker exec api ping -c 2 database
+    # PING database (172.18.0.2): 56 data bytes
+    # 64 bytes from 172.18.0.2: seq=0 ttl=64 time=0.089 ms
+    ```
+
+    Le nom `database` est résolu en adresse IP par le DNS interne de Docker. L'application peut utiliser `database:5432` comme hote PostgreSQL.
+  </Step>
+</Steps>
+
+### Commandes réseau
+
+```bash
+# Créer un réseau
+docker network create mon_reseau
+
+# Lister les réseaux
+docker network ls
+
+# Inspecter un réseau (conteneurs connectés, sous-réseau, etc.)
+docker network inspect mon_reseau
+
+# Connecter un conteneur existant à un réseau
+docker network connect mon_reseau mon_conteneur
+
+# Déconnecter un conteneur d'un réseau
+docker network disconnect mon_reseau mon_conteneur
+
+# Supprimer un réseau
+docker network rm mon_reseau
+```
+
+### Isolation réseau
+
+Les conteneurs sur des réseaux différents sont **complètement isolés** et ne peuvent pas communiquer entre eux.
+
+```bash
+# Créer deux réseaux distincts
+docker network create frontend
+docker network create backend
+
+# Ces deux conteneurs ne peuvent PAS se joindre
+docker run -d --name web --network frontend nginx
+docker run -d --name db --network backend postgres:16-alpine
+
+docker exec web ping -c 2 db
+# ping: bad address 'db'
+```
+
+<Note>
+  C'est un **principe de sécurité** important. En production, séparez vos conteneurs sur des réseaux différents selon leurs besoins de communication. Par exemple, seul le backend devrait pouvoir accéder à la base de données.
+</Note>
+
+Un conteneur peut être connecté à **plusieurs réseaux** pour servir de pont :
+
+```bash
+# Le conteneur 'api' peut parler aux deux réseaux
+docker network connect frontend api
+docker network connect backend api
+```
+
+---
+
+## Commandes récapitulatives
+
+### Volumes
+
+| Commande | Description |
+|---|---|
+| `docker volume create <nom>` | Créer un volume |
+| `docker volume ls` | Lister les volumes |
+| `docker volume inspect <nom>` | Détails d'un volume |
+| `docker volume rm <nom>` | Supprimer un volume |
+| `docker volume prune` | Supprimer les volumes inutilisés |
+| `docker run -v <volume>:<chemin>` | Monter un volume dans un conteneur |
+| `docker run -v $(pwd):<chemin>` | Bind mount du dossier courant |
+
+### Réseaux
+
+| Commande | Description |
+|---|---|
+| `docker network create <nom>` | Créer un réseau |
+| `docker network ls` | Lister les réseaux |
+| `docker network inspect <nom>` | Détails d'un réseau |
+| `docker network connect <réseau> <conteneur>` | Connecter un conteneur |
+| `docker network disconnect <réseau> <conteneur>` | Déconnecter un conteneur |
+| `docker network rm <nom>` | Supprimer un réseau |
+| `docker run --network <nom>` | Lancer un conteneur sur un réseau |

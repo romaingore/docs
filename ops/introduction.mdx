@@ -1,40 +1,369 @@
 ---
 title: "Introduction aux Ops"
-description: "Les fondamentaux du monde DevOps et de l'administration système"
+description: "Comprendre la culture DevOps, ses principes fondamentaux, et le paysage du deploiement moderne"
 ---
 
-**Ops** (Operations) désigne l'ensemble des pratiques liées au déploiement, à la gestion et à la surveillance des applications et infrastructures.
+**DevOps** = **Dev**elopment + **Op**eration**s**. C'est avant tout une **culture de collaboration** entre les equipes de developpement et d'operations, pas simplement un ensemble d'outils.
 
-## DevOps en bref
+<Warning>
+DevOps n'est **pas** Kubernetes, Docker ou CI/CD. Ces outils sont des **consequences** de la culture DevOps, pas sa definition.
+</Warning>
 
-Le **DevOps** est une culture qui réunit le développement (Dev) et les opérations (Ops) pour livrer plus vite et plus fiablement.
+## DevOps : Culture, pas outils
+
+La confusion la plus repandue dans l'industrie est de reduire DevOps a une stack technique. En realite, DevOps suit une hierarchie claire :
 
 ```
-Plan → Code → Build → Test → Release → Deploy → Operate → Monitor
- └──────────────────────────────────────────────────────────────┘
+Culture → Process → Outils
+   ↑          ↑         ↑
+   │          │         └── Docker, K8s, Terraform, GitHub Actions...
+   │          └──────────── CI/CD, GitOps, IaC, monitoring...
+   └─────────────────────── Collaboration, responsabilite partagee, feedback
 ```
 
-## Concepts clés
+<Note>
+Un outil sans la culture qui l'accompagne n'apporte rien. Installer Kubernetes ne rend pas une equipe "DevOps".
+</Note>
 
-| Concept | Description |
+### Ce que DevOps n'est PAS
+
+| Idee recue | Realite |
 |---|---|
-| **CI/CD** | Intégration et déploiement continus |
-| **IaC** | Infrastructure as Code (Terraform, Ansible) |
-| **Conteneurisation** | Isoler les applications (Docker) |
-| **Orchestration** | Gérer les conteneurs à l'échelle (Kubernetes) |
-| **Monitoring** | Surveiller les performances et la santé |
-| **Cloud** | Héberger sur des infrastructures distantes |
+| "On fait du DevOps, on utilise Docker" | Docker est un outil de conteneurisation |
+| "Notre equipe DevOps gere le CI/CD" | DevOps n'est pas une equipe, c'est une culture partagee |
+| "DevOps = automatisation" | L'automatisation est **un** des piliers, pas le seul |
+| "DevOps = Kubernetes" | K8s est un orchestrateur, pas une culture |
 
-## Stack courante
+## Les 4 principes cles du DevOps
 
-<Columns cols={3}>
-  <Card title="Système" icon="terminal">
-    Linux, Shell, SSH
+<Steps>
+  <Step title="Briser les silos">
+    Les equipes Dev et Ops ne doivent plus travailler en isolation. Cela implique :
+    - **Communication** permanente entre equipes
+    - **Partage de contexte** (les devs comprennent la prod, les ops comprennent le code)
+    - **Objectifs communs** (pas "mon code marche" vs "l'infra est stable")
+
+    ```typescript
+    // Avant DevOps : le dev ecrit du code, le jette par-dessus le mur
+    interface SiloWorkflow {
+      dev: "Ecrit du code, le pousse, s'en lave les mains";
+      ops: "Recoit le code, se debrouille pour le deployer";
+      resultat: "Blame mutuel quand ca casse";
+    }
+
+    // Apres DevOps : responsabilite partagee
+    interface DevOpsWorkflow {
+      equipe: "Dev + Ops travaillent ensemble";
+      objectif: "Livrer de la valeur rapidement et de maniere fiable";
+      resultat: "Ownership collectif du produit";
+    }
+    ```
+  </Step>
+  <Step title="Automatisation">
+    Tout ce qui peut etre automatise **doit** l'etre :
+    - **Tests** automatiques (unitaires, integration, e2e)
+    - **Build** automatique a chaque push
+    - **Deploiement** via GitOps (push = deploy)
+    - **Scans de securite** integres dans le pipeline
+
+    ```yaml
+    # Exemple : pipeline CI/CD automatise
+    name: Pipeline DevOps
+    on:
+      push:
+        branches: [main]
+
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - run: npm ci
+          - run: npm test          # Tests automatiques
+          - run: npm run lint       # Qualite de code
+          - run: npm audit          # Scan de securite
+
+      deploy:
+        needs: test
+        runs-on: ubuntu-latest
+        steps:
+          - run: ./deploy.sh       # Deploiement automatique
+    ```
+  </Step>
+  <Step title="Boucles de feedback rapides">
+    Plus le feedback arrive vite, plus on corrige vite :
+    - **Tests rapides** dans le CI (< 5 min idealement)
+    - **Logs centralises** (ELK, Datadog, Grafana Loki)
+    - **Alerting** en temps reel (PagerDuty, OpsGenie)
+    - **Metriques** de performance accessibles a tous
+
+    ```typescript
+    // Boucle de feedback ideale
+    interface FeedbackLoop {
+      push: "Le dev pousse du code";
+      ci: "Les tests passent en < 5 min";
+      deploy: "Deploiement automatique en staging";
+      monitoring: "Metriques et logs disponibles immediatement";
+      alerte: "Notification si quelque chose casse";
+      correction: "Hotfix en < 1h";
+    }
+    ```
+  </Step>
+  <Step title="Responsabilite produit">
+    "You build it, you run it" -- chaque equipe est responsable de son produit en production :
+    - Ecrire du **meilleur code** (parce qu'on sait qu'on sera de garde)
+    - **Comprendre la prod** (logs, metriques, couts)
+    - **Ownership** de bout en bout (du code au monitoring)
+  </Step>
+</Steps>
+
+## Ou Docker se situe dans la culture DevOps
+
+Docker n'est pas DevOps, mais il **permet** et **accelere** l'adoption des pratiques DevOps en agissant sur chaque principe.
+
+<CardGroup cols={2}>
+  <Card title="Briser les silos" icon="users">
+    Meme environnement pour tous. Plus de "ca marche sur ma machine".
   </Card>
-  <Card title="Conteneurs" icon="box">
-    Docker, Kubernetes
+  <Card title="Automatisation" icon="gears">
+    Build, test et deploy standardises via des images reproductibles.
   </Card>
-  <Card title="CI/CD" icon="rotate">
-    GitHub Actions, GitLab CI
+  <Card title="Feedback rapide" icon="bolt">
+    Conteneurs legers = tests plus rapides, CI accelere.
   </Card>
-</Columns>
+  <Card title="Responsabilite produit" icon="shield-check">
+    Le dev livre un conteneur pret pour la prod, pas juste du code.
+  </Card>
+</CardGroup>
+
+```typescript
+// Docker comme enabler DevOps
+const dockerDevOps = {
+  standardisation: "Dockerfile = contrat entre Dev et Ops",
+  reproductibilite: "Meme image en dev, staging et prod",
+  isolation: "Chaque service dans son conteneur",
+  rapidite: "Demarrage en secondes, pas en minutes",
+};
+```
+
+## Les 4 familles de deploiement modernes
+
+Aujourd'hui, il existe 4 grandes approches pour deployer une application en production.
+
+<Tabs>
+  <Tab title="VM Cloud">
+    **Machines virtuelles managees** : la methode la plus repandue.
+
+    | Provider | Service |
+    |---|---|
+    | AWS | EC2 |
+    | Azure | Azure Virtual Machines |
+    | GCP | Compute Engine (GCE) |
+
+    ```hcl
+    # Terraform : deployer une VM
+    resource "aws_instance" "api" {
+      ami           = "ami-0c55b159cbfafe1f0"
+      instance_type = "t3.medium"
+
+      tags = {
+        Name = "api-server"
+      }
+    }
+    ```
+
+    **Quand utiliser :** monolithes, applications legacy, controle total sur l'OS.
+  </Tab>
+  <Tab title="Conteneurs manages">
+    **Conteneurs sans gerer de cluster** : le cloud lance vos conteneurs.
+
+    | Provider | Service |
+    |---|---|
+    | AWS | Fargate (ECS) |
+    | GCP | Cloud Run |
+    | Azure | Azure Container Apps |
+
+    ```yaml
+    # Cloud Run : deployer un conteneur
+    gcloud run deploy api \
+      --image gcr.io/my-project/api:latest \
+      --platform managed \
+      --region europe-west1 \
+      --allow-unauthenticated
+    ```
+
+    **Quand utiliser :** microservices simples, APIs stateless, scale to zero.
+  </Tab>
+  <Tab title="Kubernetes manage">
+    **Orchestration de conteneurs** pour les architectures distribuees complexes.
+
+    | Provider | Service |
+    |---|---|
+    | AWS | EKS (Elastic Kubernetes Service) |
+    | GCP | GKE (Google Kubernetes Engine) |
+    | Azure | AKS (Azure Kubernetes Service) |
+
+    ```yaml
+    # Kubernetes : deploiement
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: api
+      template:
+        spec:
+          containers:
+            - name: api
+              image: my-registry/api:v1.2.0
+              ports:
+                - containerPort: 3000
+    ```
+
+    **Quand utiliser :** microservices distribues, scaling avance, multi-equipes.
+  </Tab>
+  <Tab title="Serverless">
+    **Functions as a Service** : le code s'execute a la demande, facturation a l'usage.
+
+    | Provider | Service |
+    |---|---|
+    | AWS | Lambda |
+    | GCP | Cloud Functions |
+    | Azure | Azure Functions |
+
+    ```typescript
+    // AWS Lambda : handler TypeScript
+    import { APIGatewayProxyHandler } from "aws-lambda";
+
+    export const handler: APIGatewayProxyHandler = async (event) => {
+      const body = JSON.parse(event.body ?? "{}");
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ message: "Hello", data: body }),
+      };
+    };
+    ```
+
+    **Quand utiliser :** evenementiel, taches ponctuelles, APIs a trafic variable.
+  </Tab>
+</Tabs>
+
+### Quand choisir quoi ?
+
+| Architecture | Solution recommandee | Pourquoi |
+|---|---|---|
+| **Monolithe** | VM (EC2, GCE) | Controle total, migration simple |
+| **Microservices simples** | Fargate / Cloud Run | Pas de cluster a gerer, scale to zero |
+| **Microservices distribues** | Kubernetes (EKS, GKE, AKS) | Orchestration avancee, service mesh |
+| **Evenementiel** | Serverless (Lambda, Cloud Functions) | Facturation a l'execution, scaling automatique |
+
+<Tip>
+**En realite, VM + Terraform dominent encore le marche.** La majorite des entreprises utilisent des VM classiques avec de l'Infrastructure as Code. Kubernetes est puissant mais ajoute une complexite significative -- ne l'adoptez que si votre architecture le justifie.
+</Tip>
+
+## Virtualisation : VM vs Conteneurs
+
+La virtualisation est au coeur du deploiement moderne. Il existe deux approches fondamentalement differentes.
+
+### Architecture comparee
+
+```
+        Machine Virtuelle                    Conteneur
+
+┌─────────┐ ┌─────────┐            ┌─────────┐ ┌─────────┐
+│  App A   │ │  App B   │            │  App A   │ │  App B   │
+├─────────┤ ├─────────┤            ├─────────┤ ├─────────┤
+│  Libs A  │ │  Libs B  │            │  Libs A  │ │  Libs B  │
+├─────────┤ ├─────────┤            └────┬─────┘ └─────┬───┘
+│  OS A    │ │  OS B    │                 │             │
+├─────────┤ ├─────────┤            ┌────┴─────────────┴───┐
+│ Guest OS │ │ Guest OS │            │   Container Runtime   │
+└────┬─────┘ └─────┬───┘            │      (Docker)         │
+┌────┴─────────────┴───┐            ├───────────────────────┤
+│     Hyperviseur       │            │       OS Hote          │
+├───────────────────────┤            ├───────────────────────┤
+│     OS Hote           │            │      Hardware          │
+├───────────────────────┤            └───────────────────────┘
+│     Hardware          │
+└───────────────────────┘
+```
+
+### Comparaison detaillee
+
+| Critere | VM | Conteneur (Docker) |
+|---|---|---|
+| **Taille** | Plusieurs Go (OS complet) | Quelques Mo a centaines de Mo |
+| **Demarrage** | Minutes | Secondes |
+| **Isolation** | Forte (hyperviseur) | Moderee (partage du kernel) |
+| **OS** | OS complet par VM | Partage le kernel de l'hote |
+| **Performance** | Overhead de virtualisation | Quasi-native |
+| **Densite** | ~10-20 VM par serveur | ~100+ conteneurs par serveur |
+| **Portabilite** | Liee a l'hyperviseur | "Run anywhere" avec Docker |
+| **Cas d'usage** | Isolation forte, OS differents | Microservices, CI/CD, dev local |
+
+### Quand utiliser quoi ?
+
+<Tabs>
+  <Tab title="Choisir une VM">
+    - Besoin d'un **OS different** de l'hote (Windows sur Linux, etc.)
+    - Exigences d'**isolation forte** (multi-tenant, securite)
+    - Applications **legacy** non conteneurisees
+    - Besoin de **controle total** sur l'OS et le kernel
+    - Equipes habituees a l'administration systeme classique
+
+    ```typescript
+    // Cas typique VM
+    const vmUseCases = {
+      legacy: "Application Java monolithique sur Tomcat",
+      multiOS: "Serveur Windows pour .NET Framework",
+      securite: "Environnement PCI-DSS avec isolation stricte",
+      bdd: "Base de donnees avec stockage persistant critique",
+    };
+    ```
+  </Tab>
+  <Tab title="Choisir Docker">
+    - Applications **cloud-native** et microservices
+    - Pipeline **CI/CD** rapide
+    - **Environnement de dev** reproductible
+    - Besoin de **densite** (beaucoup de services sur peu de machines)
+    - **Scaling horizontal** rapide
+
+    ```typescript
+    // Cas typique Docker
+    const dockerUseCases = {
+      microservices: "API Node.js + Worker Python + Redis",
+      cicd: "Build et test dans des conteneurs ephemeres",
+      dev: "docker compose up pour lancer tout le stack",
+      scaling: "Scale de 3 a 50 replicas en secondes",
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Dans la pratique, VM et conteneurs sont souvent **complementaires**. Beaucoup d'entreprises font tourner Docker sur des VM cloud : on profite de l'isolation de la VM et de la flexibilite des conteneurs.
+</Note>
+
+## Resume
+
+<AccordionGroup>
+  <Accordion title="DevOps = Culture, pas outils">
+    La hierarchie est claire : **Culture** d'abord, puis les **processus**, et enfin les **outils**. Kubernetes, Docker et CI/CD ne sont que des consequences d'une culture de collaboration entre Dev et Ops.
+  </Accordion>
+  <Accordion title="Les 4 principes fondamentaux">
+    1. **Briser les silos** -- communication et objectifs partages
+    2. **Automatisation** -- tests, builds, deploiements, securite
+    3. **Feedback rapide** -- CI rapide, logs centralises, alerting
+    4. **Responsabilite produit** -- "you build it, you run it"
+  </Accordion>
+  <Accordion title="4 familles de deploiement">
+    VM cloud (majorite du marche), conteneurs manages (Fargate/Cloud Run), Kubernetes manage (EKS/GKE/AKS), et serverless (Lambda/Cloud Functions). Le choix depend de l'architecture applicative.
+  </Accordion>
+  <Accordion title="VM vs Conteneurs">
+    Les VM offrent une isolation forte avec un OS complet. Les conteneurs sont legers, rapides et portables. En pratique, les deux sont complementaires.
+  </Accordion>
+</AccordionGroup>

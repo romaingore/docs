@@ -1,35 +1,576 @@
 ---
 title: "CI/CD"
-description: "Intégration continue et déploiement continu"
+description: "Integration continue, deploiement continu et pipelines automatisees"
 ---
 
-## Définitions
+La **CI/CD** est l'epine dorsale du DevOps moderne. Elle transforme un processus de livraison manuel, lent et risque en un pipeline automatise, rapide et fiable.
 
-| Terme | Signification |
-|---|---|
-| **CI** (Continuous Integration) | Intégrer et tester le code automatiquement à chaque push |
-| **CD** (Continuous Delivery) | Préparer automatiquement le code pour un déploiement |
-| **CD** (Continuous Deployment) | Déployer automatiquement en production |
+## Qu'est-ce que la CI/CD ?
+
+<CardGroup cols={2}>
+  <Card title="CI -- Continuous Integration" icon="arrows-rotate">
+    Automatiser le **build** et les **tests** a chaque changement de code. Detecter les problemes le plus tot possible. Valider que chaque commit ne casse rien.
+  </Card>
+  <Card title="CD -- Continuous Deployment" icon="rocket">
+    Automatiser le **deploiement** jusqu'en production. Livrer de la valeur rapidement. Reduire le risque d'erreur humaine.
+  </Card>
+</CardGroup>
 
 ```
-Push → Build → Test → [Approval] → Deploy
+Code → Build → Test → [Approval] → Deploy
  CI ─────────────────┘              │
  CD (Delivery) ─────────────────────┘ (manuel)
  CD (Deployment) ───────────────────── (automatique)
 ```
 
+| Terme | Signification | Objectif |
+|---|---|---|
+| **CI** (Continuous Integration) | Integrer et tester le code automatiquement a chaque push | Detecter les bugs **tot** |
+| **CD** (Continuous Delivery) | Preparer automatiquement le code pour un deploiement | Toujours **pret** a deployer |
+| **CD** (Continuous Deployment) | Deployer automatiquement en production | Livrer **vite** et **souvent** |
+
+## Le probleme de l'approche manuelle
+
+Sans CI/CD, voici a quoi ressemble un deploiement typique :
+
+```bash
+# Le developpeur fait tout a la main, service par service...
+cd api/
+npm install
+npm test          # Oublie parfois de lancer les tests
+npm run build
+docker build -t api:latest .
+docker push registry/api:latest
+
+cd ../frontend/
+npm install
+npm test
+npm run build
+docker build -t frontend:latest .
+docker push registry/frontend:latest
+
+# Et maintenant on SSH sur le serveur pour deployer...
+ssh prod-server "docker pull registry/api:latest && docker restart api"
+```
+
+<Warning>
+Cette approche est **dangereuse** :
+- **Long** : 30+ minutes pour deployer manuellement
+- **Repetitif** : les memes commandes a chaque fois
+- **Risque d'oubli** : on saute les tests, on oublie un service
+- **Non reproductible** : "ca marchait quand je l'ai fait hier"
+- **Pas de trace** : aucun historique des deploiements
+</Warning>
+
+## Pourquoi commencer en local ?
+
+Avant de configurer GitHub Actions ou GitLab CI, il faut d'abord maitriser sa pipeline **localement**.
+
+<CardGroup cols={2}>
+  <Card title="Feedback rapide" icon="bolt">
+    Pas besoin d'attendre un runner distant. Le resultat est immediat.
+  </Card>
+  <Card title="Pas de dependance externe" icon="plug-circle-xmark">
+    Fonctionne sans connexion internet, sans compte GitHub, sans runner.
+  </Card>
+  <Card title="Debugging facile" icon="bug">
+    Acces direct aux logs, aux fichiers, a l'environnement complet.
+  </Card>
+  <Card title="Iteration rapide" icon="repeat">
+    Modifier le pipeline et le retester en quelques secondes.
+  </Card>
+</CardGroup>
+
+<Tip>
+**Regle d'or** : si ca ne marche pas en local, ca ne marchera pas en production. Validez toujours vos commandes localement avant de les mettre dans un fichier CI.
+</Tip>
+
+## GoTask : task runner moderne
+
+**GoTask** (ou simplement `task`) est un task runner moderne qui remplace `Make`. Il utilise une syntaxe YAML claire et fonctionne sur tous les OS.
+
+### Pourquoi pas Make ?
+
+| Critere | Make | GoTask |
+|---|---|---|
+| **Syntaxe** | Makefile (tabs obligatoires, syntaxe archaique) | YAML (clair et lisible) |
+| **Cross-platform** | Problematique sur Windows | Natif sur tous les OS |
+| **Variables** | Limitees | Puissantes (templates Go) |
+| **Dependances** | Basees sur les fichiers | Basees sur les taches |
+| **Documentation** | Pas de `--list` integre | `task --list` integre |
+
+### Installation
+
+```bash
+# macOS
+brew install go-task
+
+# Verifier l'installation
+task --version
+
+# Initialiser un Taskfile dans le projet
+task --init
+```
+
+### Commandes utiles
+
+```bash
+task --list       # Lister toutes les taches disponibles
+task --version    # Afficher la version
+task --init       # Creer un Taskfile.yml par defaut
+task nom-tache    # Executer une tache
+task -v nom-tache # Mode verbose
+```
+
+### Anatomie d'un Taskfile.yml
+
+```yaml
+version: "3"
+
+vars:
+  APP_NAME: mon-api
+  DOCKER_REGISTRY: localhost:5000
+
+tasks:
+  install:
+    desc: Installer les dependances
+    cmds:
+      - npm ci
+
+  test:
+    desc: Lancer les tests
+    deps: [install]
+    cmds:
+      - npx vitest run
+
+  test:watch:
+    desc: Lancer les tests en mode watch
+    deps: [install]
+    cmds:
+      - npx vitest
+
+  build:
+    desc: Construire l'image Docker
+    deps: [test]
+    cmds:
+      - docker build -t {{.APP_NAME}}:latest .
+
+  tag:
+    desc: Taguer l'image pour le registry
+    cmds:
+      - docker tag {{.APP_NAME}}:latest {{.DOCKER_REGISTRY}}/{{.APP_NAME}}:{{.CLI_ARGS}}
+
+  push:
+    desc: Pousser l'image vers le registry
+    cmds:
+      - docker push {{.DOCKER_REGISTRY}}/{{.APP_NAME}}:{{.CLI_ARGS}}
+
+  clean:
+    desc: Nettoyer les artefacts
+    cmds:
+      - rm -rf node_modules dist
+      - docker rmi {{.APP_NAME}}:latest || true
+```
+
+### Fonctionnalites avancees
+
+<Tabs>
+  <Tab title="Variables">
+    ```yaml
+    version: "3"
+
+    vars:
+      # Variables statiques
+      APP_NAME: mon-api
+      VERSION: 1.0.0
+
+    tasks:
+      info:
+        desc: Afficher les informations
+        cmds:
+          - echo "App {{.APP_NAME}} v{{.VERSION}}"
+    ```
+  </Tab>
+  <Tab title="Dependances">
+    ```yaml
+    tasks:
+      install:
+        cmds:
+          - npm ci
+
+      test:
+        deps: [install]     # install s'execute avant test
+        cmds:
+          - npx vitest run
+
+      build:
+        deps: [test]        # test (et donc install) avant build
+        cmds:
+          - docker build -t app .
+    ```
+
+    Les dependances forment un **graphe** : `install` -> `test` -> `build`.
+  </Tab>
+  <Tab title="Boucles (for)">
+    ```yaml
+    tasks:
+      build:all:
+        desc: Builder tous les services
+        cmds:
+          - for: [api, frontend, worker]
+            cmd: docker build -t {{.ITEM}}:latest ./{{.ITEM}}
+
+      test:all:
+        desc: Tester tous les services
+        cmds:
+          - for: [api, frontend, worker]
+            cmd: |
+              echo "Testing {{.ITEM}}..."
+              cd {{.ITEM}} && npm test
+    ```
+  </Tab>
+  <Tab title="CLI_ARGS">
+    ```yaml
+    tasks:
+      tag:
+        desc: Taguer une image (usage: task tag -- v1.0.0)
+        cmds:
+          - docker tag app:latest registry/app:{{.CLI_ARGS}}
+
+      deploy:
+        desc: Deployer un environnement (usage: task deploy -- staging)
+        cmds:
+          - echo "Deploying to {{.CLI_ARGS}}..."
+    ```
+
+    ```bash
+    task tag -- v1.0.0
+    task deploy -- staging
+    ```
+  </Tab>
+</Tabs>
+
+## Pipeline CI locale
+
+L'idee est de reproduire **localement** ce que fera le serveur CI, avec les memes etapes et les memes verifications.
+
+### Architecture de la pipeline
+
+```
+Install → Test → Build → Tag → Push
+                   │
+                   ▼
+          Si tests echouent
+          → pipeline s'arrete
+            (fail fast)
+```
+
+<Steps>
+  <Step title="Install : installer les dependances">
+    ```bash
+    npm ci    # Preferred: install exact versions from lock file
+    ```
+
+    <Note>
+    Toujours utiliser `npm ci` plutot que `npm install` dans un pipeline CI. `npm ci` est plus rapide, plus deterministe et supprime `node_modules` avant d'installer.
+    </Note>
+  </Step>
+
+  <Step title="Test : lancer les tests unitaires">
+    ```bash
+    # En CI : une seule execution
+    npx vitest run
+
+    # En dev : mode watch (re-execute quand le code change)
+    npx vitest
+    ```
+
+    Si les tests echouent, la pipeline **s'arrete immediatement** (fail fast). Il est inutile de builder une image Docker si le code est casse.
+  </Step>
+
+  <Step title="Build : construire l'image Docker">
+    Deux approches selon le contexte :
+
+    <Tabs>
+      <Tab title="docker build">
+        ```bash
+        docker build -t mon-api:latest .
+        ```
+        **Quand l'utiliser :**
+        - Un seul service a builder
+        - Controle fin sur le build
+        - Pipeline CI classique
+      </Tab>
+      <Tab title="docker compose build">
+        ```bash
+        docker compose build
+        ```
+        **Quand l'utiliser :**
+        - Plusieurs services a builder ensemble
+        - Configuration centralisee dans `docker-compose.yml`
+        - Environnement de dev local
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Tag : etiqueter l'image">
+    ```bash
+    # Tag semantique
+    docker tag mon-api:latest localhost:5000/mon-api:v1.0.0
+
+    # Tag branche + SHA du commit
+    docker tag mon-api:latest localhost:5000/mon-api:main-abc123f
+
+    # Tag date
+    docker tag mon-api:latest localhost:5000/mon-api:2024-01-15
+    ```
+  </Step>
+
+  <Step title="Push : envoyer vers le registry">
+    ```bash
+    docker push localhost:5000/mon-api:v1.0.0
+    ```
+  </Step>
+</Steps>
+
+### Taskfile complet de la pipeline
+
+```yaml
+version: "3"
+
+vars:
+  APP_NAME: mon-api
+  REGISTRY: localhost:5000
+  VERSION: v1.0.0
+
+tasks:
+  # Pipeline complete
+  pipeline:
+    desc: Executer la pipeline CI complete
+    cmds:
+      - task: install
+      - task: test
+      - task: build
+      - task: tag
+      - task: push
+
+  install:
+    desc: Installer les dependances
+    cmds:
+      - npm ci
+
+  test:
+    desc: Lancer les tests
+    cmds:
+      - npx vitest run
+
+  build:
+    desc: Construire l'image Docker
+    cmds:
+      - docker build -t {{.APP_NAME}}:latest .
+
+  tag:
+    desc: Taguer l'image
+    cmds:
+      - docker tag {{.APP_NAME}}:latest {{.REGISTRY}}/{{.APP_NAME}}:{{.VERSION}}
+
+  push:
+    desc: Pousser vers le registry
+    cmds:
+      - docker push {{.REGISTRY}}/{{.APP_NAME}}:{{.VERSION}}
+```
+
+```bash
+# Executer toute la pipeline
+task pipeline
+
+# Ou etape par etape
+task install
+task test
+task build
+```
+
+## Container Registry
+
+Un **container registry** est un depot centralise pour stocker et distribuer des images Docker.
+
+<Note>
+**Analogie** : npm est un registry pour les packages JavaScript. Un container registry, c'est la meme chose mais pour les images Docker.
+</Note>
+
+### Registries publics et prives
+
+<Tabs>
+  <Tab title="Registries publics">
+    | Registry | URL | Gratuit | Limite |
+    |---|---|---|---|
+    | **Docker Hub** | `hub.docker.com` | Oui | 1 repo prive gratuit |
+    | **GitHub Container Registry** | `ghcr.io` | Oui | Repos publics illimites |
+    | **GitLab Container Registry** | `registry.gitlab.com` | Oui | Integre a GitLab |
+
+    ```bash
+    # Exemples de pull depuis des registries publics
+    docker pull nginx:latest                    # Docker Hub (defaut)
+    docker pull ghcr.io/owner/image:tag         # GitHub
+    docker pull registry.gitlab.com/grp/img:tag # GitLab
+    ```
+  </Tab>
+  <Tab title="Registries prives">
+    **Self-hosted :**
+    | Solution | Description |
+    |---|---|
+    | **Docker Registry** | Registry officiel, simple, open source |
+    | **Harbor** | Registry entreprise avec UI, scanning, replication |
+
+    **Cloud :**
+    | Provider | Service | URL type |
+    |---|---|---|
+    | AWS | ECR (Elastic Container Registry) | `123456.dkr.ecr.region.amazonaws.com` |
+    | GCP | GCR / Artifact Registry | `gcr.io/project-id` |
+    | Azure | ACR (Azure Container Registry) | `myregistry.azurecr.io` |
+  </Tab>
+</Tabs>
+
+### Registry local avec Docker
+
+Pour le developpement et les tests, on peut lancer un registry local en une seule commande.
+
+```bash
+# Lancer un registry local sur le port 5000
+docker run -d -p 5000:5000 --name registry registry:3.0.0
+```
+
+#### Workflow complet avec le registry local
+
+<Steps>
+  <Step title="Build : construire l'image">
+    ```bash
+    docker build -t mon-api:latest .
+    ```
+  </Step>
+  <Step title="Tag : etiqueter pour le registry local">
+    ```bash
+    docker tag mon-api:latest localhost:5000/mon-api:v1.0.0
+    ```
+  </Step>
+  <Step title="Push : pousser vers le registry">
+    ```bash
+    docker push localhost:5000/mon-api:v1.0.0
+    ```
+  </Step>
+  <Step title="Pull : recuperer depuis le registry">
+    ```bash
+    # Depuis n'importe quel poste sur le reseau
+    docker pull localhost:5000/mon-api:v1.0.0
+    ```
+  </Step>
+</Steps>
+
+#### API REST du registry
+
+Le registry expose une API REST pour lister et gerer les images :
+
+```bash
+# Lister tous les repositories
+curl http://localhost:5000/v2/_catalog
+# {"repositories":["mon-api","frontend"]}
+
+# Lister les tags d'une image
+curl http://localhost:5000/v2/mon-api/tags/list
+# {"name":"mon-api","tags":["v1.0.0","v1.1.0","latest"]}
+```
+
+#### Persistance avec un volume
+
+Par defaut, les images sont perdues si le conteneur du registry est supprime. On ajoute un volume pour la persistance :
+
+```bash
+docker run -d \
+  -p 5000:5000 \
+  --name registry \
+  -v registry_data:/var/lib/registry \
+  registry:3.0.0
+```
+
+#### Integration dans docker-compose.yml
+
+```yaml
+services:
+  registry:
+    image: registry:3.0.0
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+
+  api:
+    build: ./api
+    image: localhost:5000/api:latest
+    depends_on:
+      - registry
+
+  frontend:
+    build: ./frontend
+    image: localhost:5000/frontend:latest
+    depends_on:
+      - registry
+
+volumes:
+  registry_data:
+```
+
+## Tags et versioning
+
+La convention de nommage des images Docker suit ce format :
+
+```
+<registry>/<namespace>/<image>:<tag>
+
+# Exemples
+localhost:5000/mon-equipe/api:v1.0.0
+ghcr.io/mon-org/frontend:main-abc123f
+docker.io/library/nginx:1.25-alpine
+```
+
+### Strategies de tagging
+
+| Strategie | Exemple | Quand l'utiliser |
+|---|---|---|
+| **Semantic Versioning** | `v1.0.0`, `v2.3.1` | Releases officielles |
+| **Branche + SHA** | `main-abc123f` | Builds de branche, tracabilite |
+| **Date** | `2024-01-15`, `20240115-143022` | Deploiements quotidiens |
+| **latest** | `latest` | Developpement uniquement |
+
+<Warning>
+**Ne jamais utiliser `latest` en production.** Le tag `latest` ne garantit rien : il pointe simplement vers la derniere image pushee. En production, utilisez toujours un tag **immutable** comme `v1.2.3` ou `main-abc123f` pour garantir la reproductibilite.
+</Warning>
+
+### Bonnes pratiques de tagging
+
+```bash
+# Bonne pratique : tag semantique + SHA pour la tracabilite
+docker tag api:latest registry/api:v1.2.0
+docker tag api:latest registry/api:main-a1b2c3d
+
+# Mauvaise pratique : uniquement latest
+docker tag api:latest registry/api:latest  # Ne faites pas ca en prod
+```
+
 ## GitHub Actions
+
+**GitHub Actions** est le service CI/CD integre a GitHub. Les pipelines sont definies dans des fichiers YAML dans `.github/workflows/`.
 
 ### Structure
 
 ```
 .github/
   workflows/
-    ci.yml        # pipeline CI
-    deploy.yml    # pipeline de déploiement
+    ci.yml           # Pipeline CI (tests, lint, build)
+    deploy.yml       # Pipeline de deploiement
+    release.yml      # Pipeline de release
 ```
 
-### Exemple de pipeline CI
+### Exemple : pipeline CI complete
 
 ```yaml
 name: CI
@@ -49,32 +590,59 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: "npm"
 
       - run: npm ci
       - run: npm test
-      - run: npm run lint
+      - run: npm run build
 
-  build:
+  docker:
     needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npm ci
-      - run: npm run build
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
 ```
 
-### Concepts clés
+### Concepts cles
 
-| Concept | Description |
-|---|---|
-| **Workflow** | Pipeline automatisé (fichier YAML) |
-| **Job** | Ensemble d'étapes qui s'exécutent sur un même runner |
-| **Step** | Action individuelle dans un job |
-| **Runner** | Machine qui exécute le job |
-| **Action** | Composant réutilisable (`uses:`) |
-| **Secret** | Variable chiffrée (`${{ secrets.TOKEN }}`) |
+| Concept | Description | Exemple |
+|---|---|---|
+| **Workflow** | Pipeline automatisee (fichier YAML) | `ci.yml` |
+| **Job** | Ensemble d'etapes sur un meme runner | `test`, `build`, `deploy` |
+| **Step** | Action individuelle dans un job | `run: npm test` |
+| **Runner** | Machine qui execute le job | `ubuntu-latest` |
+| **Action** | Composant reutilisable | `actions/checkout@v4` |
+| **Secret** | Variable chiffree | `${{ secrets.DOCKER_TOKEN }}` |
+
+```
+Workflow (ci.yml)
+├── Job: test (ubuntu-latest)
+│   ├── Step: checkout
+│   ├── Step: setup-node
+│   ├── Step: npm ci
+│   └── Step: npm test
+└── Job: docker (needs: test)
+    ├── Step: checkout
+    ├── Step: login to GHCR
+    └── Step: build and push
+```
 
 ## GitLab CI
+
+**GitLab CI** utilise un fichier `.gitlab-ci.yml` a la racine du projet.
 
 ```yaml
 stages:
@@ -82,20 +650,28 @@ stages:
   - build
   - deploy
 
+variables:
+  NODE_IMAGE: node:20-alpine
+
 test:
   stage: test
-  image: node:20
+  image: $NODE_IMAGE
   script:
     - npm ci
     - npm test
+  cache:
+    paths:
+      - node_modules/
 
 build:
   stage: build
+  image: $NODE_IMAGE
   script:
     - npm run build
   artifacts:
     paths:
       - dist/
+    expire_in: 1 hour
 
 deploy:
   stage: deploy
@@ -103,12 +679,142 @@ deploy:
     - ./deploy.sh
   only:
     - main
+  environment:
+    name: production
 ```
 
-## Bonnes pratiques
+### Comparaison GitHub Actions vs GitLab CI
 
-- Lancer les tests sur **chaque push** et **chaque PR**
-- Garder les pipelines **rapides** (cache, parallélisation)
-- Ne jamais stocker de secrets dans le code
-- Utiliser des **environnements** séparés (staging, production)
-- Implémenter des **rollbacks** automatiques
+| Aspect | GitHub Actions | GitLab CI |
+|---|---|---|
+| **Fichier** | `.github/workflows/*.yml` | `.gitlab-ci.yml` |
+| **Declencheur** | `on: push/pull_request` | `only: [main]` / `rules:` |
+| **Parallelisme** | Jobs paralleles par defaut | Stages sequentiels, jobs paralleles dans un stage |
+| **Cache** | `actions/cache@v3` | `cache:` integre |
+| **Artefacts** | `actions/upload-artifact@v3` | `artifacts:` integre |
+| **Secrets** | Repository / Organization secrets | CI/CD Variables |
+| **Registry** | `ghcr.io` integre | Registry integre |
+
+## Bonnes pratiques CI/CD
+
+<AccordionGroup>
+  <Accordion title="Tests d'abord : toujours tester avant de builder">
+    Ne construisez jamais une image Docker si les tests n'ont pas passe. C'est du gaspillage de ressources et de temps.
+
+    ```yaml
+    # Bonne pratique
+    tasks:
+      pipeline:
+        cmds:
+          - task: test      # D'abord les tests
+          - task: build     # Puis le build
+          - task: push      # Enfin le push
+    ```
+  </Accordion>
+
+  <Accordion title="Cache intelligent : npm ci plutot que npm install">
+    | Commande | Comportement | Vitesse |
+    |---|---|---|
+    | `npm install` | Met a jour `package-lock.json` | Plus lent |
+    | `npm ci` | Installation exacte depuis le lock file | Plus rapide |
+
+    `npm ci` supprime `node_modules` et installe les versions **exactes** du lock file. C'est le choix recommande pour tout environnement CI.
+  </Accordion>
+
+  <Accordion title="Versioning clair : tags semantiques">
+    Adoptez le **Semantic Versioning** (semver) :
+    ```
+    v<MAJOR>.<MINOR>.<PATCH>
+
+    v1.0.0 → version initiale
+    v1.1.0 → nouvelle fonctionnalite (retro-compatible)
+    v1.1.1 → correction de bug
+    v2.0.0 → changement non retro-compatible (breaking change)
+    ```
+  </Accordion>
+
+  <Accordion title="Fail fast : arreter des qu'une etape echoue">
+    Si les tests echouent, il ne sert a rien de continuer le build ou le push. Chaque etape doit verifier le code de retour de la precedente.
+
+    ```yaml
+    # Dans GoTask, les dependances gerent ca automatiquement
+    tasks:
+      build:
+        deps: [test]   # Si test echoue, build ne s'execute pas
+        cmds:
+          - docker build -t app .
+    ```
+  </Accordion>
+
+  <Accordion title="Parallelisation : accelerer la pipeline">
+    Les taches independantes doivent s'executer en parallele :
+
+    ```yaml
+    # GitHub Actions : les jobs sans "needs" sont paralleles
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - run: npm run lint
+
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - run: npm test
+
+      # Build attend que lint ET test soient passes
+      build:
+        needs: [lint, test]
+        runs-on: ubuntu-latest
+        steps:
+          - run: npm run build
+    ```
+
+    ```
+    ┌──────┐
+    │ lint │──┐
+    └──────┘  │    ┌───────┐
+              ├───→│ build │
+    ┌──────┐  │    └───────┘
+    │ test │──┘
+    └──────┘
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Comparaison des outils
+
+| Critere | GoTask | Make | npm scripts | GitHub Actions |
+|---|---|---|---|---|
+| **Syntaxe** | YAML | Makefile | JSON | YAML |
+| **Cross-platform** | Oui | Non (problemes Windows) | Oui | N/A (cloud) |
+| **Variables** | Templates Go | Limitees | Limitees | Expressions `${{ }}` |
+| **Dependances entre taches** | `deps:` | Targets | `pre`/`post` scripts | `needs:` |
+| **Execution locale** | Oui | Oui | Oui | Non (sauf `act`) |
+| **Documentation integree** | `task --list` | Non | `npm run` | Interface GitHub |
+| **Parallele** | `deps` paralleles | `-j` flag | Non | Jobs paralleles |
+| **Courbe d'apprentissage** | Faible | Moyenne | Faible | Moyenne |
+
+<Tip>
+**Recommandation** : utilisez **GoTask** pour votre pipeline locale et **GitHub Actions** (ou GitLab CI) pour la pipeline distante. Les deux sont complementaires : GoTask permet d'iterer rapidement en local, et le CI distant garantit que chaque push est valide.
+</Tip>
+
+## Resume
+
+<AccordionGroup>
+  <Accordion title="CI/CD : automatiser tout le cycle de livraison">
+    La **CI** automatise build et tests a chaque push. Le **CD** automatise le deploiement. Ensemble, ils permettent de livrer rapidement, souvent et en toute confiance.
+  </Accordion>
+  <Accordion title="Commencer en local avec GoTask">
+    GoTask remplace Make avec une syntaxe YAML moderne et cross-platform. Il permet de definir et d'executer une pipeline CI locale avant de la porter sur un service distant.
+  </Accordion>
+  <Accordion title="Container Registry : stocker ses images">
+    Un registry stocke et distribue les images Docker. Pour le dev, un registry local (`registry:3.0.0`) suffit. En production, utilisez un service manage (GHCR, ECR, GCR).
+  </Accordion>
+  <Accordion title="Tags : jamais latest en production">
+    Utilisez le Semantic Versioning (`v1.2.3`) ou branche+SHA (`main-abc123f`) pour identifier vos images. Le tag `latest` ne doit etre utilise qu'en developpement.
+  </Accordion>
+  <Accordion title="Bonnes pratiques">
+    Tester avant de builder. Utiliser `npm ci`. Fail fast. Paralleliser les taches independantes. Et toujours valider en local avant de pousser vers le CI distant.
+  </Accordion>
+</AccordionGroup>
