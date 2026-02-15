@@ -1,0 +1,528 @@
+---
+title: "Refactoring pour la Testabilité"
+description: "Transformer du code difficile à tester en code testable"
+---
+
+## Code smells : Signes d'un code difficile à tester
+
+### 1. Dépendances cachées
+
+```typescript
+// ❌ Database créée dans la méthode
+class UserService {
+  getUser(id: number) {
+    const db = new Database(); // Dépendance cachée
+    return db.query('SELECT * FROM users WHERE id = ?', [id]);
+  }
+}
+```
+
+### 2. Logique mélangée avec I/O
+
+```typescript
+// ❌ Calcul + API call ensemble
+async function processOrder(orderId: number) {
+  const order = await fetchOrder(orderId);         // I/O
+  const total = order.items.reduce(...);            // Logique
+  await saveOrder({ ...order, total });             // I/O
+}
+```
+
+### 3. État global
+
+```typescript
+// ❌ Variable globale
+let currentUser: User | null = null;
+
+function isAdmin(): boolean {
+  return currentUser?.role === 'admin';
+}
+```
+
+### 4. `new` dans le constructeur
+
+```typescript
+// ❌ Crée ses propres dépendances
+class EmailService {
+  private mailer: Mailer;
+
+  constructor() {
+    this.mailer = new Mailer(); // Impossible à mocker proprement
+  }
+}
+```
+
+## Technique 1 : Injection de dépendances
+
+<Tabs>
+  <Tab title="✅ Après (injection)">
+  ```typescript
+  class UserService {
+    constructor(private db: Database) {} // ✅ Injecté
+
+    async getUser(id: number) {
+      return await this.db.query(
+        'SELECT * FROM users WHERE id = ?', [id]
+      );
+    }
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Avant (couplage)">
+  ```typescript
+  class UserService {
+    async getUser(id: number) {
+      const db = new Database(); // ❌ Couplage fort
+      return await db.query(
+        'SELECT * FROM users WHERE id = ?', [id]
+      );
+    }
+  }
+  ```
+  </Tab>
+</Tabs>
+
+```typescript
+// Test avec injection
+const mockDb = {
+  query: vi.fn().mockResolvedValue([{ id: 1, name: 'John' }])
+};
+const service = new UserService(mockDb);
+const user = await service.getUser(1);
+expect(user).toEqual([{ id: 1, name: 'John' }]);
+```
+
+<Note>
+Mais on peut faire mieux ! → Séparer la logique pure de l'I/O.
+</Note>
+
+## Technique 2 : Séparer logique et I/O
+
+### Avant (tout mélangé)
+
+```typescript
+async function processOrder(orderId: number) {
+  const order = await fetchOrder(orderId);                          // I/O
+  const total = order.items.reduce((sum, item) =>
+    sum + item.price * item.quantity, 0);                           // Logique
+  const discount = total > 100 ? 0.1 : 0;                          // Logique
+  const finalTotal = total * (1 - discount);                        // Logique
+  await saveOrder({ ...order, total: finalTotal });                 // I/O
+  return finalTotal;
+}
+```
+
+### Après (séparation)
+
+```typescript
+// ✅ LOGIQUE PURE (facile à tester)
+export function calculateOrderTotal(items: OrderItem[]): number {
+  return items.reduce((sum, item) =>
+    sum + item.price * item.quantity, 0
+  );
+}
+
+export function calculateDiscount(total: number): number {
+  return total > 100 ? 0.1 : 0;
+}
+
+export function applyDiscount(total: number, discount: number): number {
+  return total * (1 - discount);
+}
+
+// I/O (testée en intégration)
+async function processOrder(orderId: number) {
+  const order = await fetchOrder(orderId);                  // I/O
+  const total = calculateOrderTotal(order.items);           // Pure
+  const discount = calculateDiscount(total);                // Pure
+  const finalTotal = applyDiscount(total, discount);        // Pure
+  await saveOrder({ ...order, total: finalTotal });         // I/O
+  return finalTotal;
+}
+```
+
+**90% de la logique est testable sans mock !**
+
+```typescript
+describe('Order calculations', () => {
+  describe('calculateOrderTotal', () => {
+    it('devrait calculer le total', () => {
+      const items = [
+        { price: 10, quantity: 2 },
+        { price: 5, quantity: 3 },
+      ];
+      expect(calculateOrderTotal(items)).toBe(35);
+    });
+  });
+
+  describe('calculateDiscount', () => {
+    it('devrait retourner 10% si > 100', () => {
+      expect(calculateDiscount(150)).toBe(0.1);
+    });
+    it('devrait retourner 0 si <= 100', () => {
+      expect(calculateDiscount(50)).toBe(0);
+    });
+  });
+});
+```
+
+## Technique 3 : Passer le temps en paramètre
+
+```typescript
+// ❌ Avant (non testable)
+function isTokenExpired(token: Token): boolean {
+  const now = new Date(); // Non déterministe
+  return token.expiresAt < now;
+}
+
+// ✅ Après (testable)
+function isTokenExpired(token: Token, now: Date): boolean {
+  return token.expiresAt < now;
+}
+```
+
+```typescript
+describe('isTokenExpired', () => {
+  it('devrait retourner true si expiré', () => {
+    const token = { expiresAt: new Date('2024-01-01') };
+    const now = new Date('2024-01-02');
+    expect(isTokenExpired(token, now)).toBe(true);
+  });
+
+  it('devrait retourner false si valide', () => {
+    const token = { expiresAt: new Date('2024-01-02') };
+    const now = new Date('2024-01-01');
+    expect(isTokenExpired(token, now)).toBe(false);
+  });
+});
+```
+
+## Technique 4 : Extraire la configuration
+
+<Tabs>
+  <Tab title="✅ Configuration en paramètre">
+  ```typescript
+  interface ShippingConfig {
+    baseRate: number;
+    perKg: number;
+    internationalFee: number;
+    domesticCountry: string;
+  }
+
+  function calculateShipping(
+    weight: number,
+    country: string,
+    config: ShippingConfig
+  ): number {
+    let cost = config.baseRate + weight * config.perKg;
+    if (country !== config.domesticCountry) {
+      cost += config.internationalFee;
+    }
+    return cost;
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Constantes hardcodées">
+  ```typescript
+  function calculateShipping(
+    weight: number,
+    country: string
+  ): number {
+    const BASE_RATE = 5;
+    const PER_KG = 2;
+    const INTERNATIONAL_FEE = 10;
+
+    let cost = BASE_RATE + weight * PER_KG;
+    if (country !== 'FR') {
+      cost += INTERNATIONAL_FEE;
+    }
+    return cost;
+  }
+  ```
+  </Tab>
+</Tabs>
+
+```typescript
+describe('calculateShipping', () => {
+  const defaultConfig: ShippingConfig = {
+    baseRate: 5, perKg: 2,
+    internationalFee: 10, domesticCountry: 'FR',
+  };
+
+  it('devrait calculer pour envoi national', () => {
+    expect(calculateShipping(3, 'FR', defaultConfig)).toBe(11);
+  });
+
+  it('devrait ajouter frais international', () => {
+    expect(calculateShipping(3, 'US', defaultConfig)).toBe(21);
+  });
+});
+```
+
+## Technique 5 : Functional Core, Imperative Shell
+
+**Principe :**
+- **Core (coeur)** : Fonctions pures (logique métier)
+- **Shell (enveloppe)** : Effets de bord (I/O, API)
+
+```
+┌─────────────────────────────────┐
+│     Imperative Shell (I/O)      │
+│   ┌─────────────────────────┐   │
+│   │    Functional Core      │   │
+│   │    (Pure functions)     │   │
+│   │    - Calculs            │   │
+│   │    - Validations        │   │
+│   │    - Transformations    │   │
+│   └─────────────────────────┘   │
+│   - Database                    │
+│   - API calls                   │
+└─────────────────────────────────┘
+```
+
+```typescript
+// ✅ FUNCTIONAL CORE
+export function validateUser(user: UserInput): ValidationResult {
+  if (!user.email.includes('@')) {
+    return { valid: false, error: 'Invalid email' };
+  }
+  if (user.password.length < 8) {
+    return { valid: false, error: 'Password too short' };
+  }
+  return { valid: true };
+}
+
+export function hashPassword(password: string, salt: string): string {
+  return crypto.createHash('sha256')
+    .update(password + salt)
+    .digest('hex');
+}
+
+// IMPERATIVE SHELL
+class UserService {
+  constructor(
+    private db: Database,
+    private emailService: EmailService
+  ) {}
+
+  async registerUser(userInput: UserInput): Promise<User> {
+    const validation = validateUser(userInput);       // Pure
+    if (!validation.valid) throw new Error(validation.error);
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hashedPassword = hashPassword(userInput.password, salt); // Pure
+
+    const user = await this.db.insertUser({           // I/O
+      email: userInput.email, password: hashedPassword, salt,
+    });
+    await this.emailService.sendWelcome(user.email);  // I/O
+    return user;
+  }
+}
+```
+
+## Technique 6 : Éviter les classes statiques
+
+```typescript
+// ❌ Avant — état global + dépendance cachée
+class Logger {
+  private static logs: string[] = [];
+  static log(message: string) {
+    this.logs.push(message);
+    console.log(message);
+  }
+}
+
+function processData(data: string) {
+  Logger.log('Processing: ' + data);
+  return data.toUpperCase();
+}
+
+// ✅ Après — injection
+interface Logger {
+  log(message: string): void;
+}
+
+function processData(data: string, logger: Logger): string {
+  logger.log('Processing: ' + data);
+  return data.toUpperCase();
+}
+```
+
+## Technique 7 : Extraire les conditions complexes
+
+```typescript
+// ❌ Avant — conditions inline illisibles
+function canCheckout(user: User, cart: Cart): boolean {
+  if (user.age >= 18 && user.emailVerified &&
+      cart.items.length > 0 && cart.total <= user.creditLimit &&
+      !user.banned) {
+    return true;
+  }
+  return false;
+}
+
+// ✅ Après — fonctions nommées
+function isAdult(user: User): boolean {
+  return user.age >= 18;
+}
+function hasVerifiedEmail(user: User): boolean {
+  return user.emailVerified;
+}
+function hasItems(cart: Cart): boolean {
+  return cart.items.length > 0;
+}
+function isWithinCreditLimit(user: User, cart: Cart): boolean {
+  return cart.total <= user.creditLimit;
+}
+function isActive(user: User): boolean {
+  return !user.banned;
+}
+
+function canCheckout(user: User, cart: Cart): boolean {
+  return isAdult(user) &&
+    hasVerifiedEmail(user) &&
+    hasItems(cart) &&
+    isWithinCreditLimit(user, cart) &&
+    isActive(user);
+}
+```
+
+```typescript
+describe('Checkout validations', () => {
+  it('isAdult devrait vérifier l\'âge', () => {
+    expect(isAdult({ age: 20 })).toBe(true);
+    expect(isAdult({ age: 17 })).toBe(false);
+  });
+
+  it('canCheckout devrait combiner toutes les validations', () => {
+    const validUser = {
+      age: 20, emailVerified: true,
+      creditLimit: 1000, banned: false,
+    };
+    const validCart = { items: [{}], total: 50 };
+    expect(canCheckout(validUser, validCart)).toBe(true);
+  });
+});
+```
+
+## Exemple réel : Refactoring complet
+
+### Avant — Code legacy
+
+```typescript
+class InvoiceService {
+  async generateInvoice(orderId: number) {
+    const db = new Database();
+    const order = await db.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+
+    let total = 0;
+    for (const item of order.items) {
+      total += item.price * item.quantity;
+    }
+    const tva = total * 0.2;
+    const totalTTC = total + tva;
+
+    const pdf = new PDFGenerator();
+    const pdfBuffer = await pdf.generate({ order, total: totalTTC, date: new Date() });
+
+    await db.query(
+      'INSERT INTO invoices (order_id, pdf, total) VALUES (?, ?, ?)',
+      [orderId, pdfBuffer, totalTTC]
+    );
+    return { orderId, total: totalTTC };
+  }
+}
+```
+
+### Après — Code refactoré
+
+```typescript
+// ✅ FONCTIONS PURES (logique métier)
+export function calculateSubtotal(items: OrderItem[]): number {
+  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+}
+
+export function calculateTVA(subtotal: number, rate: number): number {
+  return subtotal * rate;
+}
+
+export function calculateTotal(subtotal: number, tva: number): number {
+  return subtotal + tva;
+}
+
+export function buildInvoiceData(
+  orderId: number, items: OrderItem[], tvaRate: number, date: Date
+): InvoiceData {
+  const subtotal = calculateSubtotal(items);
+  const tva = calculateTVA(subtotal, tvaRate);
+  const total = calculateTotal(subtotal, tva);
+  return { orderId, items, subtotal, tva, total, date };
+}
+```
+
+```typescript
+// SERVICE (orchestration avec I/O)
+class InvoiceService {
+  constructor(
+    private orderRepo: OrderRepository,
+    private invoiceRepo: InvoiceRepository,
+    private pdfGenerator: PDFGenerator,
+    private tvaRate: number
+  ) {}
+
+  async generateInvoice(orderId: number): Promise<InvoiceData> {
+    const order = await this.orderRepo.getOrder(orderId);
+    const invoiceData = buildInvoiceData(orderId, order.items, this.tvaRate, new Date());
+    const pdf = await this.pdfGenerator.generate(invoiceData);
+    await this.invoiceRepo.saveInvoice(invoiceData, pdf);
+    return invoiceData;
+  }
+}
+```
+
+```typescript
+// Tests des fonctions pures — sans aucun mock
+describe('Invoice calculations', () => {
+  const items = [{ price: 10, quantity: 2 }, { price: 5, quantity: 3 }];
+
+  it('devrait calculer le sous-total', () => {
+    expect(calculateSubtotal(items)).toBe(35);
+  });
+
+  it('devrait calculer la TVA à 20%', () => {
+    expect(calculateTVA(100, 0.2)).toBe(20);
+  });
+
+  it('devrait construire les données complètes', () => {
+    const date = new Date('2024-01-27');
+    const data = buildInvoiceData(123, items, 0.2, date);
+    expect(data).toEqual({
+      orderId: 123, items, subtotal: 35, tva: 7, total: 42, date,
+    });
+  });
+});
+```
+
+## Checklist de refactoring
+
+<Steps>
+  <Step title="Extraire la logique métier en fonctions pures" />
+  <Step title="Séparer calculs et I/O" />
+  <Step title="Injecter les dépendances (Database, API clients)" />
+  <Step title="Passer le temps en paramètre" />
+  <Step title="Externaliser la configuration" />
+  <Step title="Éviter les variables globales" />
+  <Step title="Rendre les fonctions déterministes" />
+  <Step title="Préférer l'immutabilité" />
+  <Step title="Nommer les conditions complexes" />
+  <Step title="Utiliser le pattern Functional Core / Imperative Shell" />
+</Steps>
+
+## Priorités de refactoring
+
+| Priorité | Cible | Pourquoi |
+|---|---|---|
+| **1** | Logique métier critique | Calculs de prix, validations, transformations |
+| **2** | Code avec tests manquants | Identifier, refactorer, puis tester |
+| **3** | Code souvent modifié | Plus de testabilité = plus de confiance |

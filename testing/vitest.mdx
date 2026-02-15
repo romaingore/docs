@@ -1,0 +1,446 @@
+---
+title: "Tests avec Vitest"
+description: "Exemples pratiques de tests avec Vitest"
+---
+
+## Pourquoi Vitest ?
+
+| Avantage | Description |
+|---|---|
+| **Ultra rapide** | Utilise Vite (ESM natif) |
+| **Compatible Jest** | Même API |
+| **Watch mode intelligent** | Re-run seulement les tests impactés |
+| **Zero config** | Fonctionne out of the box |
+| **UI intégrée** | Interface graphique pour les tests |
+
+```bash
+npm install -D vitest
+```
+
+## Structure de base d'un test
+
+```typescript
+import { describe, it, expect } from 'vitest';
+
+describe('nom du module', () => {
+  it('devrait faire quelque chose', () => {
+    // Arrange (préparer)
+    const input = 5;
+
+    // Act (agir)
+    const result = add(input, 3);
+
+    // Assert (vérifier)
+    expect(result).toBe(8);
+  });
+});
+```
+
+<Note>
+**Pattern AAA** : Arrange, Act, Assert — la structure recommandée pour chaque test.
+</Note>
+
+## Exemple 1 : Tests de fonctions pures
+
+```typescript
+// src/utils/math.ts
+export function add(a: number, b: number): number {
+  return a + b;
+}
+export function multiply(a: number, b: number): number {
+  return a * b;
+}
+export function divide(a: number, b: number): number {
+  if (b === 0) throw new Error('Division by zero');
+  return a / b;
+}
+```
+
+```typescript
+// src/utils/math.test.ts
+import { describe, it, expect } from 'vitest';
+import { add, multiply, divide } from './math';
+
+describe('Math utilities', () => {
+  describe('add', () => {
+    it('devrait additionner deux nombres positifs', () => {
+      expect(add(2, 3)).toBe(5);
+    });
+    it('devrait gérer les nombres négatifs', () => {
+      expect(add(-2, -3)).toBe(-5);
+    });
+    it('devrait gérer zéro', () => {
+      expect(add(5, 0)).toBe(5);
+    });
+  });
+
+  describe('divide', () => {
+    it('devrait diviser deux nombres', () => {
+      expect(divide(10, 2)).toBe(5);
+    });
+  });
+});
+```
+
+## Exemple 2 : Validation
+
+```typescript
+// src/validators/user.ts
+export interface UserInput {
+  email: string;
+  password: string;
+  age: number;
+}
+export interface ValidationError {
+  field: string;
+  message: string;
+}
+
+export function validateUser(user: UserInput): ValidationError[] {
+  const errors: ValidationError[] = [];
+  if (!user.email.includes('@')) {
+    errors.push({ field: 'email', message: 'Invalid email format' });
+  }
+  if (user.password.length < 8) {
+    errors.push({ field: 'password', message: 'Password too short' });
+  }
+  return errors;
+}
+```
+
+```typescript
+// src/validators/user.test.ts
+describe('validateUser', () => {
+  it('devrait valider un utilisateur correct', () => {
+    const user = { email: 'user@example.com', password: 'password123', age: 25 };
+    const errors = validateUser(user);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('devrait rejeter un email invalide', () => {
+    const user = { email: 'invalidemail', password: 'password123', age: 25 };
+    const errors = validateUser(user);
+    expect(errors).toContainEqual({
+      field: 'email', message: 'Invalid email format'
+    });
+  });
+});
+```
+
+## Exemple 3 : Transformation de données
+
+```typescript
+// src/transformers/product.ts
+export interface Product {
+  id: number;
+  name: string;
+  price: number;
+  category: string;
+  inStock: boolean;
+}
+export interface ProductDTO {
+  id: number;
+  displayName: string;
+  formattedPrice: string;
+  available: boolean;
+}
+
+export function productToDTO(product: Product): ProductDTO {
+  return {
+    id: product.id,
+    displayName: `${product.name} (${product.category})`,
+    formattedPrice: `${product.price} €`,
+    available: product.inStock,
+  };
+}
+```
+
+```typescript
+// src/transformers/product.test.ts
+describe('productToDTO', () => {
+  it('devrait transformer un produit en DTO', () => {
+    const product = {
+      id: 1, name: 'Laptop', price: 999.99,
+      category: 'Electronics', inStock: true,
+    };
+    const dto = productToDTO(product);
+    expect(dto).toEqual({
+      id: 1,
+      displayName: 'Laptop (Electronics)',
+      formattedPrice: '999.99 €',
+      available: true,
+    });
+  });
+});
+```
+
+## Exemple 4 : Logique métier complexe
+
+```typescript
+// src/business/pricing.ts
+export interface PricingConfig {
+  taxRate: number;
+  shippingFee: number;
+  freeShippingThreshold: number;
+}
+export interface CartItem {
+  price: number;
+  quantity: number;
+}
+export interface PricingBreakdown {
+  subtotal: number;
+  shipping: number;
+  tax: number;
+  total: number;
+}
+
+export function calculatePricing(
+  items: CartItem[], config: PricingConfig
+): PricingBreakdown {
+  const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const shipping = subtotal >= config.freeShippingThreshold ? 0 : config.shippingFee;
+  const tax = subtotal * config.taxRate;
+  const total = subtotal + shipping + tax;
+  return { subtotal, shipping, tax, total };
+}
+```
+
+```typescript
+// src/business/pricing.test.ts
+describe('calculatePricing', () => {
+  const config = { taxRate: 0.2, shippingFee: 10, freeShippingThreshold: 100 };
+
+  it('devrait calculer le prix avec frais de port', () => {
+    const items = [{ price: 20, quantity: 2 }, { price: 10, quantity: 1 }];
+    const result = calculatePricing(items, config);
+    expect(result).toEqual({
+      subtotal: 50, shipping: 10, tax: 10, total: 70,
+    });
+  });
+
+  it('devrait offrir les frais de port au-dessus du seuil', () => {
+    const items = [{ price: 60, quantity: 2 }];
+    const result = calculatePricing(items, config);
+    expect(result.shipping).toBe(0);
+  });
+});
+```
+
+## Exemple 5 : Test avec Date
+
+```typescript
+// src/utils/date.ts
+export function isExpired(expiryDate: Date, now: Date): boolean {
+  return expiryDate < now;
+}
+
+export function daysUntil(targetDate: Date, now: Date): number {
+  const diffMs = targetDate.getTime() - now.getTime();
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+```
+
+```typescript
+// src/utils/date.test.ts
+describe('Date utilities', () => {
+  describe('isExpired', () => {
+    it('devrait retourner true si expiré', () => {
+      const expiry = new Date('2024-01-01');
+      const now = new Date('2024-01-02');
+      expect(isExpired(expiry, now)).toBe(true);
+    });
+    it('devrait retourner false si non expiré', () => {
+      const expiry = new Date('2024-01-02');
+      const now = new Date('2024-01-01');
+      expect(isExpired(expiry, now)).toBe(false);
+    });
+  });
+
+  describe('daysUntil', () => {
+    it('devrait calculer les jours restants', () => {
+      const target = new Date('2024-01-10');
+      const now = new Date('2024-01-01');
+      expect(daysUntil(target, now)).toBe(9);
+    });
+  });
+});
+```
+
+## Tests paramétrés avec `test.each`
+
+```typescript
+// src/utils/string.ts
+export function capitalize(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+```
+
+```typescript
+// src/utils/string.test.ts
+describe('capitalize', () => {
+  test.each([
+    ['hello', 'Hello'],
+    ['WORLD', 'World'],
+    ['javaScript', 'Javascript'],
+    ['a', 'A'],
+  ])('capitalize("%s") devrait retourner "%s"', (input, expected) => {
+    expect(capitalize(input)).toBe(expected);
+  });
+});
+```
+
+## Éviter les mocks : cas pratiques
+
+### Cas 1 : Logger
+
+```typescript
+// ❌ Avec mock
+test('should log message', () => {
+  const logger = { log: vi.fn() };
+  processData('test', logger);
+  expect(logger.log).toHaveBeenCalledWith('Processing: test');
+});
+
+// ✅ Sans mock — séparer la logique du logging
+function processData(data: string): string {
+  return data.toUpperCase();
+}
+
+test('should process data', () => {
+  expect(processData('test')).toBe('TEST');
+});
+```
+
+### Cas 2 : API externe
+
+```typescript
+// ❌ Avec mock
+test('should fetch and process user', async () => {
+  const api = { fetchUser: vi.fn().mockResolvedValue({ name: 'John' }) };
+  const result = await getUserName(1, api);
+  expect(result).toBe('John');
+});
+
+// ✅ Sans mock — séparer fetch et transformation
+function extractUserName(user: User): string {
+  return user.name;
+}
+
+test('should extract user name', () => {
+  const user = { id: 1, name: 'John', email: 'john@example.com' };
+  expect(extractUserName(user)).toBe('John');
+});
+```
+
+## Assertions courantes
+
+```typescript
+// Égalité
+expect(value).toBe(5);              // ===
+expect(value).toEqual({ a: 1 });    // Deep equality
+
+// Booléens
+expect(value).toBeTruthy();
+expect(value).toBeFalsy();
+expect(value).toBeNull();
+expect(value).toBeUndefined();
+
+// Nombres
+expect(value).toBeGreaterThan(10);
+expect(value).toBeLessThanOrEqual(5);
+expect(value).toBeCloseTo(0.3, 1);  // Floats
+
+// Strings
+expect(value).toMatch(/pattern/);
+expect(value).toContain('substring');
+
+// Arrays
+expect(array).toHaveLength(3);
+expect(array).toContain('item');
+```
+
+## Organisation des tests
+
+```
+src/
+├── utils/
+│   ├── math.ts
+│   └── math.test.ts       ← À côté du fichier source
+├── business/
+│   ├── pricing.ts
+│   └── pricing.test.ts
+└── services/
+    ├── order.service.ts
+    └── order.service.test.ts
+```
+
+- **Fichier** : `*.test.ts` ou `*.spec.ts`
+- **Describe** : Nom du module/fonction
+- **It** : "devrait + comportement attendu"
+
+## Bonnes pratiques
+
+### 1. Un test = Une assertion principale
+
+```typescript
+// ❌ Éviter
+it('should validate user', () => {
+  expect(result.valid).toBe(true);
+  expect(result.errors).toHaveLength(0);
+  expect(result.user.name).toBe('John');
+});
+
+// ✅ Préférer
+it('should return valid result', () => {
+  expect(result.valid).toBe(true);
+});
+it('should have no errors', () => {
+  expect(result.errors).toHaveLength(0);
+});
+```
+
+### 2. Tests indépendants
+
+```typescript
+// ❌ État partagé
+let cart: Cart;
+beforeEach(() => { cart = new Cart(); });
+
+// ✅ Chaque test crée son contexte
+it('should add item', () => {
+  const cart = new Cart();
+  cart.add({ id: 1 });
+  expect(cart.items).toHaveLength(1);
+});
+```
+
+### 3. Noms descriptifs
+
+```typescript
+// ❌ Vague
+it('works', () => { /* ... */ });
+
+// ✅ Descriptif
+it('devrait calculer le total avec réduction de 10% pour commandes > 100€', () => {
+  /* ... */
+});
+```
+
+### 4. Tester les cas limites
+
+```typescript
+describe('divide', () => {
+  it('devrait diviser normalement', () => {
+    expect(divide(10, 2)).toBe(5);
+  });
+  it('devrait gérer division par zéro', () => {
+    expect(() => divide(10, 0)).toThrow();
+  });
+  it('devrait gérer les nombres négatifs', () => {
+    expect(divide(-10, 2)).toBe(-5);
+  });
+  it('devrait gérer les décimales', () => {
+    expect(divide(1, 3)).toBeCloseTo(0.333, 2);
+  });
+});
+```

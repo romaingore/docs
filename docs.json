@@ -34,6 +34,21 @@
         ]
       },
       {
+        "tab": "Testing",
+        "groups": [
+          {
+            "group": "Testabilité du Code",
+            "pages": [
+              "testing/introduction",
+              "testing/fonctions-pures",
+              "testing/refactoring",
+              "testing/vitest",
+              "testing/conclusion"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "Ops",
         "groups": [
           {

@@ -1,0 +1,187 @@
+---
+title: "Introduction à la Testabilité"
+description: "Écrire du code facile à tester sans mocks"
+---
+
+La **testabilité** est la capacité d'un code à être testé facilement et efficacement. Un code testable est souvent un code bien conçu.
+
+<Note>
+"Si votre code est difficile à tester, c'est souvent un indicateur de problème de design"
+</Note>
+
+## Le problème courant
+
+```typescript
+// Code difficile à tester
+class UserService {
+  async createUser(email: string) {
+    const db = new Database();    // ❌ Couplage fort
+    const api = new EmailAPI();   // ❌ Effet de bord
+
+    const user = await db.insert({ email });
+    await api.sendWelcome(email);
+    return user;
+  }
+}
+```
+
+**Conséquences :**
+- Impossible de tester sans base de données réelle
+- Dépendance à un service email externe
+- Tests lents et fragiles
+- Nécessite des mocks complexes
+
+## Les 3 piliers de la testabilité
+
+### 1. Déterminisme
+
+Même entrée → Même sortie.
+
+<Tabs>
+  <Tab title="✅ Déterministe">
+  ```typescript
+  function add(a: number, b: number): number {
+    return a + b;
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Non déterministe">
+  ```typescript
+  function getCurrentTime(): Date {
+    return new Date();
+  }
+  ```
+  </Tab>
+</Tabs>
+
+### 2. Isolation
+
+Pas de dépendances externes.
+
+<Tabs>
+  <Tab title="✅ Isolé">
+  ```typescript
+  function saveUser(user: User, db: Database) {
+    return db.save(user);
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Pas isolé">
+  ```typescript
+  function saveUser(user: User) {
+    database.save(user); // Dépendance globale
+  }
+  ```
+  </Tab>
+</Tabs>
+
+### 3. Pas d'effets de bord
+
+La fonction ne modifie rien en dehors d'elle-même.
+
+<Tabs>
+  <Tab title="✅ Sans effet de bord">
+  ```typescript
+  function add(current: number, value: number): number {
+    return current + value;
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Effet de bord">
+  ```typescript
+  let total = 0;
+  function addToTotal(value: number) {
+    total += value; // Modifie une variable externe
+  }
+  ```
+  </Tab>
+</Tabs>
+
+## Spectre de testabilité
+
+| Facile à tester | Difficile à tester |
+|---|---|
+| `add(2, 3)` | `saveToDatabase()` |
+| `calculatePrice()` | `sendEmail()` |
+| `formatDate()` | `getCurrentUser()` |
+| `validateEmail()` | `Math.random()` |
+
+**Objectif : Déplacer le maximum de logique vers la gauche (fonctions pures) !**
+
+## Pourquoi éviter les mocks ?
+
+Les mocks créent des problèmes :
+
+- **Faux positifs** : Le test passe mais le code est cassé
+- **Couplage** : Les tests connaissent l'implémentation
+- **Maintenance** : Changement de code = changement de mocks
+- **Complexité** : Plus de code de test que de code réel
+
+### Exemple du problème
+
+```typescript
+// Code à tester
+class OrderService {
+  constructor(private db: Database) {}
+
+  async createOrder(items: Item[]) {
+    const total = this.calculateTotal(items);
+    return await this.db.save({ items, total });
+  }
+
+  private calculateTotal(items: Item[]): number {
+    return items.reduce((sum, item) => sum + item.price, 0);
+  }
+}
+
+// ❌ Test avec mock — teste l'interaction, pas la logique !
+test('createOrder', async () => {
+  const mockDb = { save: vi.fn().mockResolvedValue({ id: 1 }) };
+  const service = new OrderService(mockDb as any);
+  await service.createOrder([{ price: 10 }, { price: 20 }]);
+
+  expect(mockDb.save).toHaveBeenCalledWith({
+    items: [{ price: 10 }, { price: 20 }],
+    total: 30
+  });
+});
+```
+
+<Warning>
+Si `calculateTotal` est bugué, le test passe quand même !
+</Warning>
+
+### La solution : extraire la logique pure
+
+```typescript
+// Logique métier pure (facile à tester)
+export function calculateTotal(items: Item[]): number {
+  return items.reduce((sum, item) => sum + item.price, 0);
+}
+
+// Infrastructure (testée en intégration)
+class OrderService {
+  constructor(private db: Database) {}
+
+  async createOrder(items: Item[]) {
+    const total = calculateTotal(items); // Fonction pure
+    return await this.db.save({ items, total });
+  }
+}
+
+// ✅ Test sans mock
+test('calculateTotal', () => {
+  const items = [{ price: 10 }, { price: 20 }];
+  expect(calculateTotal(items)).toBe(30);
+});
+```
+
+## Objectifs du cours
+
+<Steps>
+  <Step title="Identifier le code difficile à tester" />
+  <Step title="Refactorer pour améliorer la testabilité" />
+  <Step title="Écrire des fonctions pures" />
+  <Step title="Tester sans mocks (ou presque)" />
+  <Step title="Utiliser Vitest efficacement" />
+</Steps>

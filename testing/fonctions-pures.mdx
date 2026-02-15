@@ -1,0 +1,350 @@
+---
+title: "Fonctions Pures"
+description: "Le fondement de la testabilité"
+---
+
+## Qu'est-ce qu'une fonction pure ?
+
+Une fonction est **pure** si :
+
+1. **Déterministe** : Même entrée → Même sortie
+2. **Sans effet de bord** : Ne modifie rien en dehors d'elle-même
+
+```typescript
+// ✅ Fonction pure
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+add(2, 3); // Toujours 5
+add(2, 3); // Toujours 5
+add(2, 3); // Toujours 5
+```
+
+### Contre-exemple : Fonction impure
+
+```typescript
+// ❌ Fonction impure (effet de bord)
+let counter = 0;
+
+function incrementCounter(): number {
+  counter++; // Modifie une variable externe
+  return counter;
+}
+
+incrementCounter(); // 1
+incrementCounter(); // 2 ← Résultat différent !
+incrementCounter(); // 3
+```
+
+**Problèmes pour les tests :**
+- Résultat dépend de l'état global
+- Ordre d'exécution des tests important
+- Tests interdépendants
+
+## Fonctions pures vs impures
+
+### Date/Heure
+
+<Tabs>
+  <Tab title="✅ Pure">
+  ```typescript
+  function isWeekend(date: Date): boolean {
+    const day = date.getDay();
+    return day === 0 || day === 6;
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Impure">
+  ```typescript
+  function isWeekend(): boolean {
+    const today = new Date(); // Non déterministe
+    const day = today.getDay();
+    return day === 0 || day === 6;
+  }
+  ```
+  </Tab>
+</Tabs>
+
+Test de la version pure :
+
+```typescript
+import { describe, it, expect } from 'vitest';
+
+describe('isWeekend', () => {
+  it('devrait retourner true pour samedi', () => {
+    const saturday = new Date('2024-01-27');
+    expect(isWeekend(saturday)).toBe(true);
+  });
+
+  it('devrait retourner false pour lundi', () => {
+    const monday = new Date('2024-01-22');
+    expect(isWeekend(monday)).toBe(false);
+  });
+});
+```
+
+### Calcul de prix
+
+<Tabs>
+  <Tab title="✅ Pure">
+  ```typescript
+  interface PriceConfig {
+    taxRate: number;
+    discount: number;
+  }
+
+  function calculatePrice(
+    basePrice: number,
+    config: PriceConfig
+  ): number {
+    const withTax = basePrice * (1 + config.taxRate);
+    const withDiscount = withTax * (1 - config.discount);
+    return Math.round(withDiscount * 100) / 100;
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Impure">
+  ```typescript
+  const TAX_RATE = 0.2;
+  let globalDiscount = 0;
+
+  function calculatePrice(basePrice: number): number {
+    const withTax = basePrice * (1 + TAX_RATE);
+    const withDiscount = withTax * (1 - globalDiscount);
+    return Math.round(withDiscount * 100) / 100;
+  }
+  // Impossible de tester sans changer globalDiscount
+  ```
+  </Tab>
+</Tabs>
+
+```typescript
+describe('calculatePrice', () => {
+  it('devrait appliquer taxe et réduction', () => {
+    const config = { taxRate: 0.2, discount: 0.1 };
+    const result = calculatePrice(100, config);
+    // 100 * 1.2 = 120, puis 120 * 0.9 = 108
+    expect(result).toBe(108);
+  });
+});
+```
+
+## Identifier les effets de bord
+
+Les effets de bord courants à surveiller :
+
+| Type | Exemple | Problème |
+|---|---|---|
+| Variables externes | `let count = 0; function increment() { count++; }` | État global mutable |
+| I/O | `function saveUser(user) { db.save(user); }` | Dépendance base de données |
+| Date/Heure | `function getCurrentAge() { return new Date().getFullYear() - birthYear; }` | Non déterministe |
+| Aléatoire | `function generateId() { return Math.random(); }` | Non reproductible |
+
+## Transformer les effets de bord
+
+**Stratégie : Passer les dépendances en paramètres.**
+
+### Date/Heure
+
+```typescript
+// ❌ Avant
+function isExpired(expiryDate: Date): boolean {
+  return expiryDate < new Date();
+}
+
+// ✅ Après
+function isExpired(expiryDate: Date, now: Date): boolean {
+  return expiryDate < now;
+}
+```
+
+### Aléatoire
+
+```typescript
+// ❌ Avant
+function shuffleArray<T>(array: T[]): T[] {
+  return array.sort(() => Math.random() - 0.5);
+}
+
+// ✅ Après
+function shuffleArray<T>(array: T[], randomFn: () => number): T[] {
+  return array.sort(() => randomFn() - 0.5);
+}
+```
+
+## Immutabilité
+
+**Principe : Ne pas modifier les données en entrée.**
+
+<Tabs>
+  <Tab title="✅ Immutable">
+  ```typescript
+  function addItem(cart: Item[], item: Item): Item[] {
+    return [...cart, item]; // Crée un nouveau tableau
+  }
+  ```
+  </Tab>
+  <Tab title="❌ Mutation">
+  ```typescript
+  function addItem(cart: Item[], item: Item): Item[] {
+    cart.push(item); // Modifie l'array original
+    return cart;
+  }
+  ```
+  </Tab>
+</Tabs>
+
+```typescript
+describe('addItem', () => {
+  it('ne devrait pas modifier le panier original', () => {
+    const originalCart = [{ id: 1, name: 'Item 1' }];
+    const newItem = { id: 2, name: 'Item 2' };
+    const newCart = addItem(originalCart, newItem);
+
+    expect(originalCart).toHaveLength(1); // ✅ Intact
+    expect(newCart).toHaveLength(2);
+  });
+});
+```
+
+## Composition de fonctions pures
+
+Les fonctions pures se composent facilement :
+
+```typescript
+function addTax(price: number, taxRate: number): number {
+  return price * (1 + taxRate);
+}
+
+function applyDiscount(price: number, discount: number): number {
+  return price * (1 - discount);
+}
+
+function roundPrice(price: number): number {
+  return Math.round(price * 100) / 100;
+}
+
+// Composition
+function calculateFinalPrice(
+  basePrice: number,
+  taxRate: number,
+  discount: number
+): number {
+  return roundPrice(
+    applyDiscount(
+      addTax(basePrice, taxRate),
+      discount
+    )
+  );
+}
+```
+
+```typescript
+describe('price calculations', () => {
+  it('addTax devrait ajouter la taxe', () => {
+    expect(addTax(100, 0.2)).toBe(120);
+  });
+
+  it('applyDiscount devrait appliquer la réduction', () => {
+    expect(applyDiscount(100, 0.1)).toBe(90);
+  });
+
+  it('calculateFinalPrice devrait composer les calculs', () => {
+    expect(calculateFinalPrice(100, 0.2, 0.1)).toBe(108);
+  });
+});
+```
+
+## Exemple : Filtrer et transformer
+
+```typescript
+interface Product {
+  id: number;
+  name: string;
+  price: number;
+  inStock: boolean;
+}
+
+function getAvailableProducts(
+  products: Product[],
+  maxPrice: number
+): Array<{ id: number; name: string }> {
+  return products
+    .filter(p => p.inStock && p.price <= maxPrice)
+    .map(p => ({ id: p.id, name: p.name }));
+}
+```
+
+```typescript
+describe('getAvailableProducts', () => {
+  const products: Product[] = [
+    { id: 1, name: 'A', price: 10, inStock: true },
+    { id: 2, name: 'B', price: 20, inStock: false },
+    { id: 3, name: 'C', price: 15, inStock: true },
+  ];
+
+  it('devrait retourner les produits dispo sous le prix max', () => {
+    const result = getAvailableProducts(products, 12);
+    expect(result).toEqual([{ id: 1, name: 'A' }]);
+  });
+});
+```
+
+## Avantages des fonctions pures
+
+<CardGroup cols={2}>
+  <Card title="Pour les tests">
+    - Pas de setup/teardown
+    - Pas de mocks
+    - Tests rapides
+    - Tests isolés
+  </Card>
+  <Card title="Pour le code">
+    - Facile à comprendre
+    - Facile à débugger
+    - Facile à refactorer
+    - Réutilisable et parallélisable
+  </Card>
+</CardGroup>
+
+## Quand éviter les fonctions pures ?
+
+Certains cas nécessitent des effets de bord :
+- Persistance (base de données, fichiers)
+- Communication réseau (API, websockets)
+- Interface utilisateur (DOM, console)
+- Logs et métriques
+
+**Solution : Architecture en couches**
+
+```typescript
+// ✅ COUCHE MÉTIER (Pure)
+function calculateOrderTotal(items: Item[]): number {
+  return items.reduce((sum, item) => sum + item.price, 0);
+}
+
+function validateOrder(order: Order): ValidationResult {
+  if (order.items.length === 0) {
+    return { valid: false, error: 'Empty order' };
+  }
+  return { valid: true };
+}
+
+// COUCHE INFRASTRUCTURE (Impure)
+class OrderService {
+  async createOrder(items: Item[]) {
+    const total = calculateOrderTotal(items);    // Pure
+    const validation = validateOrder({ items }); // Pure
+
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+    return await this.db.save({ items, total }); // Impure
+  }
+}
+```
+
+<Note>
+**Récapitulatif** : Même entrée → Même sortie. Pas d'effet de bord. Pas de dépendance externe. Extraire la logique métier en fonctions pures, isoler les effets de bord, composer les fonctions pures.
+</Note>

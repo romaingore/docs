@@ -1,0 +1,214 @@
+---
+title: "Conclusion & Bonnes Pratiques"
+description: "Testabilité, architecture et stratégie de tests"
+---
+
+## Ce que nous avons vu
+
+| Chapitre | Points clés |
+|---|---|
+| **Fonctions pures** | Déterministes, sans effet de bord, faciles à tester |
+| **Refactoring** | Séparation logique/I/O, injection de dépendances, Functional Core |
+| **Vitest** | Tests unitaires rapides, sans mocks, tests paramétrés |
+
+## Architecture recommandée
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Controllers / API Layer                             │
+│ - Validation des entrées  - Orchestration           │
+└─────────────────┬───────────────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────────────────┐
+│ Services (Imperative Shell)                         │
+│ - Coordonne les appels I/O  - Gère les transactions │
+│ - Appelle le business logic                         │
+└─────────────────┬───────────────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────────────────┐
+│ Business Logic (Functional Core)                    │
+│ - Fonctions pures  - Calculs  - Validations         │
+│ - Transformations → 90% testable sans mocks         │
+└─────────────────┬───────────────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────────────────┐
+│ Repositories / Data Access                          │
+│ - Abstraction de la DB  - Queries                   │
+└─────────────────────────────────────────────────────┘
+```
+
+## Stratégie de tests
+
+### Pyramide des tests
+
+```
+        /\
+       /  \    E2E (peu, lents, fragiles)
+      /────\
+     /  IT  \  Tests d'intégration (quelques-uns)
+    /────────\
+   /   Unit   \ Tests unitaires (beaucoup, rapides)
+  /────────────\
+```
+
+| Type | Proportion | Caractéristiques |
+|---|---|---|
+| **Tests unitaires** | ~95% | Fonctions pures, rapides (< 1ms), pas de mocks, haute coverage |
+| **Tests d'intégration** | ~5% | Services avec vraies dépendances, DB de test, plus lents mais essentiels |
+
+## Métriques de testabilité
+
+| Métrique | Objectif |
+|---|---|
+| Ratio de fonctions pures | `Fonctions pures / Total > 80%` |
+| Coverage sans mocks | `Code testé sans mock / Total > 80%` |
+| Temps d'exécution | `Suite unitaire < 1 seconde` |
+| Complexité cyclomatique | `Moyenne < 5 par fonction` |
+
+## Les 5 règles d'or
+
+<Steps>
+  <Step title="Fonction pure par défaut">
+    Si vous pouvez la rendre pure, faites-le.
+  </Step>
+  <Step title="Séparer décision et effet">
+    Calculer quoi faire, puis le faire.
+  </Step>
+  <Step title="Petit est testable">
+    Fonctions de moins de 10 lignes sont plus faciles à tester.
+  </Step>
+  <Step title="Nommer explicitement">
+    `calculateTotalWithTax` > `getTotal`
+  </Step>
+  <Step title="Tester en écrivant">
+    Si vous ne pouvez pas tester facilement, refactorez.
+  </Step>
+</Steps>
+
+## Anti-patterns à éviter
+
+### 1. Mock hell
+
+```typescript
+// ❌ Plus de mocks que de code réel
+const mockDb = vi.fn();
+const mockApi = vi.fn();
+const mockCache = vi.fn();
+const mockLogger = vi.fn();
+const mockMetrics = vi.fn();
+```
+
+### 2. Tester l'implémentation, pas le comportement
+
+```typescript
+// ❌ Teste comment, pas quoi
+expect(service.calculateTotal).toHaveBeenCalled();
+```
+
+### 3. Tests interdépendants
+
+```typescript
+// ❌ L'ordre des tests compte
+let sharedState;
+it('test 1', () => { sharedState = 1; });
+it('test 2', () => { expect(sharedState).toBe(1); });
+```
+
+## Quand utiliser les mocks ?
+
+Les mocks restent OK pour :
+
+| Cas | Exemple |
+|---|---|
+| **Services externes** | `vi.fn().mockResolvedValue({ status: 'success' })` |
+| **Tests de retry/timeout** | Simuler des échecs réseau successifs |
+| **Vérifier logs/métriques** | `expect(logger.error).toHaveBeenCalledWith(...)` |
+
+<Note>
+Mais toujours minimiser leur usage en refactorant pour extraire la logique pure !
+</Note>
+
+## Checklist de code review
+
+Pour chaque Pull Request, vérifier :
+
+- [ ] Les fonctions sont-elles pures quand possible ?
+- [ ] La logique métier est-elle séparée de l'I/O ?
+- [ ] Y a-t-il des dépendances cachées ?
+- [ ] Les effets de bord sont-ils isolés ?
+- [ ] Les fonctions sont-elles déterministes ?
+- [ ] Le code est-il testable sans mocks ?
+- [ ] Les tests sont-ils rapides (< 1s) ?
+- [ ] Le coverage est-il > 80% ?
+- [ ] Les cas limites sont-ils testés ?
+
+## Impact sur l'équipe
+
+<CardGroup cols={2}>
+  <Card title="Avantages">
+    - **Onboarding** : Nouveau dev comprend vite grâce aux tests
+    - **Refactoring** : Changements sans peur de casser
+    - **Reviews** : Plus facile de reviewer du code testé
+    - **Documentation vivante** : Les tests documentent le comportement
+    - **Vélocité** : Développement plus rapide sur le long terme
+  </Card>
+  <Card title="Investissement">
+    - **Temps initial** : +20-30%
+    - **Temps à long terme** : -40-50% (moins de bugs, moins de régressions)
+  </Card>
+</CardGroup>
+
+## Exemple de progression
+
+| Métrique | Avant | Après refactoring |
+|---|---|---|
+| Coverage | 45% | 87% |
+| Tests unitaires | 23 | 94 |
+| Temps d'exécution | 3.5s | 0.4s |
+| Mocks | 18 | 4 |
+| Code testable sans DB | 30% | 85% |
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Je n'ai pas le temps d'écrire des tests">
+    Vous n'avez pas le temps de **ne pas** en écrire. Les bugs coûtent 10x plus cher en production.
+  </Accordion>
+  <Accordion title="Mon code est trop complexe pour être testé">
+    C'est justement le signe qu'il faut le refactorer.
+  </Accordion>
+  <Accordion title="Les tests ralentissent le développement">
+    Au début oui (+20%), mais ensuite ils accélèrent tout (-40% de bugs).
+  </Accordion>
+</AccordionGroup>
+
+## Récapitulatif final
+
+**3 concepts clés :**
+1. **Fonctions pures** : Déterministes, sans effet de bord
+2. **Separation of Concerns** : Logique séparée de l'I/O
+3. **Dependency Injection** : Rendre les dépendances explicites
+
+**3 pratiques :**
+1. Écrire les tests en même temps que le code
+2. Refactorer dès que c'est difficile à tester
+3. Viser 80%+ de code pur
+
+## Ressources
+
+<CardGroup cols={2}>
+  <Card title="Livres">
+    - *Working Effectively with Legacy Code* — Michael Feathers
+    - *Refactoring* — Martin Fowler
+    - *Clean Code* — Robert C. Martin
+  </Card>
+  <Card title="Outils & Docs">
+    - [Vitest](https://vitest.dev/)
+    - [Testing Library](https://testing-library.com/)
+    - Stryker (mutation testing)
+  </Card>
+</CardGroup>
+
+<Note>
+**"If it's hard to test, it's hard to use"** — Testabilité = Qualité
+</Note>
